@@ -32,7 +32,7 @@ impl CommonCreateInput for &mut CreateInputs {
         Some(CreateInputs::scheme(self))
     }
     fn set_caller(&mut self, caller: Address) {
-        self.set_call(caller);
+        CreateInputs::set_call(self, caller);
     }
     fn log_debug(&self, cheatcode: &mut Cheatcodes, scheme: &CreateScheme) {
         let kind = match scheme {

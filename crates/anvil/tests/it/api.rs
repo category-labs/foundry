@@ -4,8 +4,10 @@ use crate::{
     abi::{Multicall, SimpleStorage, VendingMachine},
     utils::{connect_pubsub_with_wallet, http_provider, http_provider_with_signer},
 };
-use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559};
-use alloy_eips::eip4844::BlobTransactionSidecar;
+use alloy_consensus::{
+    BlobTransactionSidecar, SidecarBuilder, SignableTransaction, SimpleCoder, Transaction,
+    TxEip1559,
+};
 use alloy_network::{
     EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TxSignerSync,
 };

@@ -1,5 +1,5 @@
 use crate::utils::{http_provider, http_provider_with_signer};
-use alloy_consensus::{SidecarBuilder, SimpleCoder, Transaction};
+use alloy_consensus::{BlobTransactionSidecar, SidecarBuilder, SimpleCoder, Transaction};
 use alloy_eips::{
     Typed2718,
     eip4844::{

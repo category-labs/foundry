@@ -45,7 +45,7 @@ use monad_revm::MonadContext;
 use op_revm::{OpContext, OpTransaction};
 use revm::{
     Database, Inspector,
-    context::{Block as RevmBlock, Cfg, CfgEnv, TxEnv},
+    context::{Block as RevmBlock, Cfg, TxEnv},
     context_interface::result::{EVMError, ExecutionResult, Output},
     interpreter::InstructionResult,
     primitives::hardfork::SpecId,
@@ -97,6 +97,8 @@ impl ExecutedTransaction {
                     logs_bloom: receipt_with_bloom.logs_bloom,
                 })
             }
+            // TODO(onbjerg): we should impl support for Tempo transactions
+            FoundryTxEnvelope::Tempo(_) => todo!(),
         }
     }
 }
@@ -501,12 +503,13 @@ where
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>> + Inspector<MonadContext<DB>>,
 {
     if env.networks.is_optimism() {
-        let cfg = env
-            .evm_env
-            .cfg_env
-            .clone()
-            .with_spec_and_mainnet_gas_params(op_revm::OpSpecId::ISTHMUS);
-        let evm_env = EvmEnv::new(cfg, env.evm_env.block_env.clone());
+        let evm_env = EvmEnv::new(
+            env.evm_env
+                .cfg_env
+                .clone()
+                .with_spec_and_mainnet_gas_params(op_revm::OpSpecId::ISTHMUS),
+            env.evm_env.block_env.clone(),
+        );
         EitherEvm::Op(OpEvmFactory::default().create_evm_with_inspector(db, evm_env, inspector))
     } else if env.networks.is_monad() {
         let cfg: monad_revm::MonadCfgEnv = env
