@@ -12,7 +12,7 @@ use alloy_evm::{Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use monad_revm::{
-    MonadCfgEnv, MonadContext, MonadEvm as InnerMonadEvm, MonadSpecId,
+    MonadCfgEnv, MonadContext, MonadEvm as InnerMonadEvm, MonadJournalTr, MonadSpecId,
     instructions::MonadInstructions, monad_context_with_db,
 };
 use revm::{
@@ -46,6 +46,7 @@ pub fn new_evm_with_inspector<'db, I: InspectorExt>(
     ctx.block = env.evm_env.block_env;
     ctx.cfg = monad_cfg;
     ctx.tx = env.tx;
+    ctx.journaled_state.set_monad_spec(spec);
     ctx.journaled_state.set_spec_id(spec.into_eth_spec());
     ctx.cfg.tx_chain_id_check = true;
 

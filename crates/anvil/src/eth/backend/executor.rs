@@ -45,7 +45,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
-use monad_revm::{MonadContext, MonadEvm as RevmMonadEvm, monad_context_with_db};
+use monad_revm::{MonadContext, MonadEvm as RevmMonadEvm, MonadJournalTr, monad_context_with_db};
 use op_revm::{DefaultOp, OpBuilder, OpContext, OpTransaction, precompiles::OpPrecompiles};
 use revm::{
     Context, Database, Inspector, MainBuilder, MainContext,
@@ -536,6 +536,7 @@ where
         let mut ctx = monad_context_with_db(db);
         ctx.block = env.evm_env.block_env.clone();
         ctx.cfg = cfg;
+        ctx.journaled_state.set_monad_spec(hardfork);
         ctx.journaled_state.set_spec_id(hardfork.into_eth_spec());
         EitherEvm::Monad(MonadEvm::new(
             RevmMonadEvm::new(ctx, inspector).with_precompiles(FoundryPrecompiles::monad(hardfork)),

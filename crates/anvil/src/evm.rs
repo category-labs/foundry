@@ -28,7 +28,9 @@ mod tests {
     };
     use foundry_evm_networks::NetworkConfigs;
     use itertools::Itertools;
-    use monad_revm::{MonadContext, MonadEvm as RevmMonadEvm, MonadSpecId, monad_context_with_db};
+    use monad_revm::{
+        MonadContext, MonadEvm as RevmMonadEvm, MonadJournalTr, MonadSpecId, monad_context_with_db,
+    };
     use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
     use revm::{
         Journal,
@@ -199,6 +201,7 @@ mod tests {
         monad_evm_context.block = monad_env.evm_env.block_env.clone();
         monad_evm_context.cfg = monad_cfg.clone();
         monad_evm_context.tx = monad_env.tx.base.clone();
+        monad_evm_context.journaled_state.set_monad_spec(monad_cfg.spec);
         monad_evm_context.journaled_state.set_spec_id(monad_env.evm_env.cfg_env.spec);
         let monad_evm = EitherEvm::Monad(MonadEvm::new(
             RevmMonadEvm(RevmEvm::new_with_inspector(
