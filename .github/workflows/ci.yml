@@ -27,7 +27,7 @@ jobs:
     secrets: inherit
 
   doctest:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -41,10 +41,27 @@ jobs:
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
-      - run: cargo test --workspace --doc
+      - run: cargo test --workspace --doc --locked
+
+  no-default-features:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        with:
+          toolchain: stable
+      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
+      - run: cargo build --workspace --no-default-features --locked
 
   typos:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -54,8 +71,24 @@ jobs:
           persist-credentials: false
       - uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06 # v1
 
+  shellcheck:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Shellcheck
+        shell: bash
+        run: ./.github/scripts/shellcheck.sh
+      - name: foundryup tests
+        shell: bash
+        run: ./foundryup/test.sh
+
   clippy:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -70,12 +103,12 @@ jobs:
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
-      - run: cargo clippy --workspace --all-targets --all-features
+      - run: cargo clippy --workspace --all-targets --all-features --locked
         env:
           RUSTFLAGS: -Dwarnings
 
   rustfmt:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -90,7 +123,7 @@ jobs:
       - run: cargo fmt --all --check
 
   forge-fmt:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -109,7 +142,7 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   crate-checks:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -126,7 +159,7 @@ jobs:
           tool: cargo-hack
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2
-      - run: cargo hack check
+      - run: cargo hack check --locked
 
   deny:
     uses: ithacaxyz/ci/.github/workflows/deny.yml@9c8d0dc20e7ad02455d3fdab2378a05f29907630 # main
@@ -140,7 +173,9 @@ jobs:
     needs:
       - test
       - doctest
+      - no-default-features
       - typos
+      - shellcheck
       - clippy
       - rustfmt
       - forge-fmt
