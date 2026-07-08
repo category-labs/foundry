@@ -102,7 +102,7 @@ jobs:
             RUST_FEATURES=${{ env.RUST_FEATURES }}
             TAG_NAME=${{ inputs.tag_name }}
             VERGEN_GIT_SHA=${{ github.sha }}
-          project: 8gkbxxjrpw
+          project: hx4q3pv70v
           context: .
           tags: ${{ steps.docker_tagging.outputs.docker_tags }}
           labels: ${{ steps.meta.outputs.labels }}
