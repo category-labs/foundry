@@ -71,7 +71,7 @@ clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
 dunce.workspace = true
 indicatif.workspace = true
-inferno = { version = "0.12", default-features = false }
+inferno = { version = "0.12.7", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
 regex = { workspace = true, default-features = false }
@@ -100,7 +100,7 @@ opener = "0.8"
 # soldeer
 soldeer-commands.workspace = true
 soldeer-core.workspace = true
-quick-junit = "0.5.2"
+quick-junit = "0.6.1"
 
 [dev-dependencies]
 alloy-hardforks.workspace = true

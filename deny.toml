@@ -10,6 +10,14 @@ ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2026-0173 proc-macro-error2 is unmaintained.
     # Pulled through alloy-sol-macro/alloy-sol-types; no safe upgrade is available for this branch.
     "RUSTSEC-2026-0173",
+    # https://rustsec.org/advisories/RUSTSEC-2026-0194 quick-xml quadratic duplicate attribute check.
+    # Runtime quick-xml users are upgraded to 0.41.0; the remaining 0.39.2 edge is only
+    # email-address-parser's build-dependency through soldeer-commands.
+    "RUSTSEC-2026-0194",
+    # https://rustsec.org/advisories/RUSTSEC-2026-0195 quick-xml unbounded namespace allocation.
+    # Runtime quick-xml users are upgraded to 0.41.0; the remaining 0.39.2 edge is only
+    # email-address-parser's build-dependency through soldeer-commands.
+    "RUSTSEC-2026-0195",
 ]
 
 # This section is considered when running `cargo deny check bans`.

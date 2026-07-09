@@ -17,7 +17,9 @@ const SKIP_DIRS: &[&str] = &["out", "cache", "broadcast"];
 pub use crate::{ext::*, prj::*};
 
 /// The commit of forge-std to use.
-pub const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
+pub fn forge_std_revision() -> &'static str {
+    include_str!("../../../testdata/forge-std-rev").trim()
+}
 
 /// Global default template path. Contains the global template project from which all other
 /// temp projects are initialized. See [`initialize()`] for more info.
@@ -90,7 +92,7 @@ pub fn initialize(target: &Path) {
             // Checkout forge-std.
             let output = Command::new("git")
                 .current_dir(prj.root().join("lib/forge-std"))
-                .args(["checkout", FORGE_STD_REVISION])
+                .args(["checkout", forge_std_revision()])
                 .output()
                 .expect("failed to checkout forge-std");
             assert!(output.status.success(), "{output:#?}");

@@ -5,7 +5,7 @@ use foundry_cli::utils::{Git, Submodules};
 use foundry_compilers::artifacts::Remapping;
 use foundry_config::Config;
 use foundry_test_utils::util::{
-    ExtTester, FORGE_STD_REVISION, TestCommand, pretty_err, read_string,
+    ExtTester, TestCommand, forge_std_revision, pretty_err, read_string,
 };
 use semver::Version;
 use std::{
@@ -43,7 +43,7 @@ Compiler run successful!
 
     // assert lockfile
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
+    assert_eq!(forge_std.rev(), forge_std_revision());
 
     // Expect compilation to be skipped as no files have changed
     cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
@@ -80,7 +80,7 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
     // assert lockfile
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
+    assert_eq!(forge_std.rev(), forge_std_revision());
 });
 
 // test to check that install/remove works properly
@@ -640,13 +640,13 @@ forgetest_init!(sync_on_forge_update, |prj, cmd| {
     let git = Git::new(prj.root());
 
     let submodules = git.submodules().unwrap();
-    assert!(submodules.0.iter().any(|s| s.rev() == FORGE_STD_REVISION));
+    assert!(submodules.0.iter().any(|s| s.rev() == forge_std_revision()));
 
     let mut lockfile = Lockfile::new(prj.root());
     lockfile.read().unwrap();
 
     let forge_std = lockfile.get(&PathBuf::from("lib/forge-std")).unwrap();
-    assert!(forge_std.rev() == FORGE_STD_REVISION);
+    assert!(forge_std.rev() == forge_std_revision());
 
     // cd into the forge-std submodule
     let forge_std_path = prj.root().join("lib/forge-std");
