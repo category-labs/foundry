@@ -1,7 +1,7 @@
 //! svm sanity checks
 
 use semver::Version;
-use svm::Platform;
+use svm::{Platform, SvmError};
 
 /// The latest Solc release.
 ///
@@ -23,13 +23,26 @@ macro_rules! ensure_svm_releases {
 }
 
 async fn ensure_latest_release(platform: Platform) {
-    let releases = svm::all_releases(platform)
-        .await
-        .unwrap_or_else(|err| panic!("Could not fetch releases for {platform}: {err:?}"));
+    let releases = match svm::all_releases(platform).await {
+        Ok(releases) => releases,
+        Err(err) if is_rate_limited_release_fetch(&err) => return,
+        Err(err) => panic!("Could not fetch releases for {platform}: {err:?}"),
+    };
     assert!(
         releases.releases.contains_key(&LATEST_SOLC),
         "platform {platform:?} is missing solc info for v{LATEST_SOLC}"
     );
+}
+
+fn is_rate_limited_release_fetch(err: &SvmError) -> bool {
+    match err {
+        SvmError::ReqwestError(err) => {
+            err.status().is_some_and(|status| status.as_u16() == 429)
+                || (err.is_decode() && err.to_string().contains("integer `429`"))
+        }
+        SvmError::UnsuccessfulResponse(_, status) => status.as_u16() == 429,
+        _ => false,
+    }
 }
 
 // ensures all platform have the latest solc release version

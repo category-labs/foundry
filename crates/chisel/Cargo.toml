@@ -44,6 +44,7 @@ alloy-json-abi.workspace = true
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs.workspace = true
 eyre.workspace = true
+path-slash.workspace = true
 reqwest.workspace = true
 rustyline = "17"
 itertools.workspace = true

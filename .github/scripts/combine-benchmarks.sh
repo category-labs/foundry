@@ -9,13 +9,6 @@ OUTPUT_DIR="${1:-benches}"
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# Define the benchmark files and their section names
-declare -A BENCHMARK_FILES=(
-    ["forge_test_bench.md"]="Forge Test"
-    ["forge_build_bench.md"]="Forge Build" 
-    ["forge_coverage_bench.md"]="Forge Coverage"
-)
-
 # Function to extract a specific section from a benchmark file
 extract_section() {
     local file=$1
@@ -146,43 +139,45 @@ for bench_file in "forge_test_bench.md" "forge_isolate_test_bench.md" "forge_bui
                 ;;
         esac
         
-        # Add section header
-        echo "## $SECTION_NAME" >> "$OUTPUT_DIR/LATEST.md"
-        echo >> "$OUTPUT_DIR/LATEST.md"
-        
-        # Add summary info (repos and versions)
-        extract_summary_info "$OUTPUT_DIR/$bench_file" >> "$OUTPUT_DIR/LATEST.md"
-        echo >> "$OUTPUT_DIR/LATEST.md"
-        
-        # Handle different benchmark types
-        if [[ "$bench_file" == "forge_test_bench.md" ]]; then
-            # Extract both Forge Test and Forge Fuzz Test tables
-            extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Test" >> "$OUTPUT_DIR/LATEST.md"
-            
-            # Check if Forge Fuzz Test section exists
-            if grep -q "^## Forge Fuzz Test" "$OUTPUT_DIR/$bench_file"; then
-                echo >> "$OUTPUT_DIR/LATEST.md"
-                echo "## Forge Fuzz Test" >> "$OUTPUT_DIR/LATEST.md"
-                echo >> "$OUTPUT_DIR/LATEST.md"
-                extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Fuzz Test" >> "$OUTPUT_DIR/LATEST.md"
+        {
+            # Add section header
+            echo "## $SECTION_NAME"
+            echo
+
+            # Add summary info (repos and versions)
+            extract_summary_info "$OUTPUT_DIR/$bench_file"
+            echo
+
+            # Handle different benchmark types
+            if [[ "$bench_file" == "forge_test_bench.md" ]]; then
+                # Extract both Forge Test and Forge Fuzz Test tables
+                extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Test"
+
+                # Check if Forge Fuzz Test section exists
+                if grep -q "^## Forge Fuzz Test" "$OUTPUT_DIR/$bench_file"; then
+                    echo
+                    echo "## Forge Fuzz Test"
+                    echo
+                    extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Fuzz Test"
+                fi
+            elif [[ "$bench_file" == "forge_build_bench.md" ]]; then
+                # Extract No Cache table
+                echo "### No Cache"
+                echo
+                extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Build (No Cache)"
+                echo
+
+                # Extract With Cache table
+                echo "### With Cache"
+                echo
+                extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Build (With Cache)"
+            else
+                # Extract the benchmark table for other types
+                extract_benchmark_table "$OUTPUT_DIR/$bench_file" "$SECTION_NAME"
             fi
-        elif [[ "$bench_file" == "forge_build_bench.md" ]]; then
-            # Extract No Cache table
-            echo "### No Cache" >> "$OUTPUT_DIR/LATEST.md"
-            echo >> "$OUTPUT_DIR/LATEST.md"
-            extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Build (No Cache)" >> "$OUTPUT_DIR/LATEST.md"
-            echo >> "$OUTPUT_DIR/LATEST.md"
-            
-            # Extract With Cache table
-            echo "### With Cache" >> "$OUTPUT_DIR/LATEST.md"
-            echo >> "$OUTPUT_DIR/LATEST.md"
-            extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Build (With Cache)" >> "$OUTPUT_DIR/LATEST.md"
-        else
-            # Extract the benchmark table for other types
-            extract_benchmark_table "$OUTPUT_DIR/$bench_file" "$SECTION_NAME" >> "$OUTPUT_DIR/LATEST.md"
-        fi
-        
-        echo >> "$OUTPUT_DIR/LATEST.md"
+
+            echo
+        } >> "$OUTPUT_DIR/LATEST.md"
         
         # Extract system info from first file only
         if [[ $FIRST_FILE -eq 1 ]]; then
@@ -196,9 +191,11 @@ done
 
 # Add system information at the end
 if [[ -n "$SYSTEM_INFO" ]]; then
-    echo "## System Information" >> "$OUTPUT_DIR/LATEST.md"
-    echo >> "$OUTPUT_DIR/LATEST.md"
-    echo "$SYSTEM_INFO" >> "$OUTPUT_DIR/LATEST.md"
+    {
+        echo "## System Information"
+        echo
+        echo "$SYSTEM_INFO"
+    } >> "$OUTPUT_DIR/LATEST.md"
 fi
 
 echo "Successfully combined benchmark results into $OUTPUT_DIR/LATEST.md"

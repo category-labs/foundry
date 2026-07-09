@@ -480,8 +480,8 @@ semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 similar-asserts = "1.7"
-soldeer-commands = "=0.10.0"
-soldeer-core = { version = "=0.10.1", features = ["serde"] }
+soldeer-commands = "=0.11.0"
+soldeer-core = { version = "=0.11.0", features = ["serde"] }
 strum = "0.27"
 tempfile = "3.23"
 tokio = "1"
@@ -550,6 +550,8 @@ idna_adapter = "=1.1.0"
 
 [patch.crates-io]
 # monad-revm = { git = "https://github.com/category-labs/monad-revm.git", branch = "main" }
+
+svm-rs-builds = { path = "vendor/svm-rs-builds" }
 
 # https://github.com/rust-cli/rexpect/pull/106
 rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }

@@ -22,6 +22,7 @@ use foundry_evm::{
     },
     opts::EvmOpts,
 };
+use path_slash::PathExt;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;
@@ -713,7 +714,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                 .filter_map(|e| e.ok())
                 .find(|e| e.file_name() == "Vm.sol")
         {
-            vm_import = format!("import {{Vm}} from \"{}\";\n", vm_path.path().display());
+            vm_import = format!("import {{Vm}} from \"{}\";\n", vm_path.path().to_slash_lossy());
             vm_constant = "Vm internal constant vm = Vm(address(uint160(uint256(keccak256(\"hevm cheat code\")))));\n".to_string();
         }
 
