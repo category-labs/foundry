@@ -5,7 +5,6 @@ permissions: {}
 on:
   push:
     tags:
-      - "stable-monad"
       - "v*.*.*-monad-v*.*.*"
   workflow_dispatch:
 
@@ -126,7 +125,12 @@ jobs:
             exit 1
           fi
           notes_file="$(mktemp)"
-          printf '%s' "$CHANGELOG" > "$notes_file"
+          if [[ "$IS_NIGHTLY" != "true" && -s .github/RELEASE_NOTES_PREFIX.md ]]; then
+            cat .github/RELEASE_NOTES_PREFIX.md > "$notes_file"
+            printf '\n\n%s' "$CHANGELOG" >> "$notes_file"
+          else
+            printf '%s' "$CHANGELOG" > "$notes_file"
+          fi
           flags=(--draft --verify-tag --title "$RELEASE_NAME" --notes-file "$notes_file")
           if [[ "$IS_NIGHTLY" == "true" ]]; then
             flags+=(--prerelease)

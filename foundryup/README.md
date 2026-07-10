@@ -1,28 +1,37 @@
 # `foundryup`
 
-Update or revert to a specific Foundry branch with ease.
+Update or revert to a specific Foundry or Monad Foundry release with ease.
 
 `foundryup` supports installing and managing multiple versions.
 
 ## Installing
 
 ```sh
-curl -L https://foundry.paradigm.xyz | bash
+curl -L https://raw.githubusercontent.com/category-labs/foundry/monad/foundryup/install | bash
 ```
+
+Existing users with the legacy `foundryup 1.5.0` launcher must rerun this installer once. The old
+launcher only parses `major.minor.patch` versions and cannot self-update to the Monad version scheme.
+
+Monad foundryup versions use `<upstream-foundryup-version>-monad-v<fork-version>`. For example,
+`1.5.0-monad-v1.0.0` is Monad foundryup v1.0.0 based on upstream foundryup 1.5.0.
 
 ## Usage
 
-To install the **latest** version:
+To install the latest stable **Monad Foundry** release:
 
 ```sh
-foundryup
+foundryup --network monad
 ```
 
-Or alternatively:
+The stable Monad channel resolves to a concrete immutable release such as
+`v1.7.1-monad-v1.0.0`. To install a specific Monad Foundry release instead:
 
 ```sh
-foundryup -i latest
+foundryup --network monad --install v1.7.1-monad-v1.0.0
 ```
+
+Running `foundryup` without `--network monad` installs upstream Foundry.
 
 To install the latest **nightly** version:
 

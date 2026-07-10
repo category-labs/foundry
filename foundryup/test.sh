@@ -19,6 +19,7 @@ install_tmp=""
 fake_archive=""
 last_archive_url=""
 used_version=""
+mock_latest_tag=""
 
 check_eq() {
   local desc="$1" expected="$2" actual="$3"
@@ -55,12 +56,29 @@ check_failure() {
 say() { :; }
 warn() { :; }
 
-# --- version_gt ------------------------------------------------------------
+# --- foundryup versioning --------------------------------------------------
 
-check_success "version_gt detects newer patch" version_gt 1.5.1 1.5.0
-check_success "version_gt detects newer minor" version_gt 1.6.0 1.5.9
-check_failure "version_gt rejects equal versions" version_gt 1.5.0 1.5.0
-check_failure "version_gt rejects older versions" version_gt 1.4.9 1.5.0
+check_eq "foundryup uses composite Monad version" \
+  "1.5.0-monad-v1.0.0" "$FOUNDRYUP_INSTALLER_VERSION"
+check_eq "extract_installer_version parses composite version" \
+  "1.5.0-monad-v1.2.3" \
+  "$(printf '%s\n' 'FOUNDRYUP_INSTALLER_VERSION="1.5.0-monad-v1.2.3"' | extract_installer_version)"
+check_success "version_gt detects newer Monad patch" \
+  version_gt 1.5.0-monad-v1.0.1 1.5.0-monad-v1.0.0
+check_success "version_gt detects newer Monad minor" \
+  version_gt 1.5.0-monad-v1.1.0 1.5.0-monad-v1.0.9
+check_success "version_gt detects newer upstream base" \
+  version_gt 1.6.0-monad-v1.0.0 1.5.9-monad-v9.9.9
+check_failure "version_gt rejects equal versions" \
+  version_gt 1.5.0-monad-v1.0.0 1.5.0-monad-v1.0.0
+check_failure "version_gt rejects older Monad versions" \
+  version_gt 1.5.0-monad-v0.9.9 1.5.0-monad-v1.0.0
+check_failure "version_gt rejects malformed versions" version_gt 1.6.0 1.5.0-monad-v1.0.0
+
+check_success "versioned Monad release tag is accepted" \
+  is_monad_release_tag v1.7.1-monad-v1.0.0
+check_failure "legacy Monad release tag is not a new versioned release" \
+  is_monad_release_tag v1.5.0-monad.0.3.0
 
 # --- detect_platform_arch -------------------------------------------------
 
@@ -117,6 +135,7 @@ setup_install_fixture() {
   BINS=(forge cast anvil chisel)
   last_archive_url=""
   used_version=""
+  mock_latest_tag=""
 }
 
 teardown_install_fixture() {
@@ -127,6 +146,7 @@ need_cmd() { :; }
 banner() { :; }
 check_installer_up_to_date() { :; }
 check_bins_in_use() { :; }
+resolve_latest_release_tag() { printf '%s\n' "$mock_latest_tag"; }
 use() { used_version="$FOUNDRYUP_VERSION"; }
 uname() {
   case "$1" in
@@ -147,12 +167,30 @@ download() {
 }
 
 setup_install_fixture
-main --network monad --install stable-monad --force --platform linux --arch amd64 >/dev/null 2>&1
-check_eq "stable-monad uses category-labs/foundry" "category-labs/foundry" "$FOUNDRYUP_REPO"
-check_eq "stable-monad archive name" \
+mock_latest_tag="v1.7.1-monad-v1.0.0"
+main --network monad --force --platform linux --arch amd64 >/dev/null 2>&1
+check_eq "stable Monad channel uses category-labs/foundry" "category-labs/foundry" "$FOUNDRYUP_REPO"
+check_eq "stable Monad channel resolves latest version" "v1.7.1-monad-v1.0.0" "$FOUNDRYUP_TAG"
+check_eq "stable Monad channel uses versioned archive" \
+  "https://github.com/category-labs/foundry/releases/download/v1.7.1-monad-v1.0.0/foundry_v1.7.1-monad-v1.0.0_linux_amd64.tar.gz" \
+  "$last_archive_url"
+check_eq "stable Monad channel activates immutable version directory" \
+  "v1.7.1-monad-v1.0.0" "$used_version"
+teardown_install_fixture
+
+setup_install_fixture
+mock_latest_tag="v1.5.0-monad.0.3.0"
+main --network monad --force --platform linux --arch amd64 >/dev/null 2>&1
+check_eq "stable Monad channel falls back to stable-monad" "stable-monad" "$FOUNDRYUP_TAG"
+check_eq "legacy fallback archive name" \
   "https://github.com/category-labs/foundry/releases/download/stable-monad/foundry_stable-monad_linux_amd64.tar.gz" \
   "$last_archive_url"
-check_eq "stable-monad activates stable-monad directory" "stable-monad" "$used_version"
+check_eq "legacy fallback activates stable-monad directory" "stable-monad" "$used_version"
+teardown_install_fixture
+
+setup_install_fixture
+main --network monad --install stable-monad --force --platform linux --arch amd64 >/dev/null 2>&1
+check_eq "explicit stable-monad install remains supported" "stable-monad" "$FOUNDRYUP_TAG"
 teardown_install_fixture
 
 setup_install_fixture
@@ -164,7 +202,7 @@ check_eq "bare Monad release archive name" \
   "$last_archive_url"
 teardown_install_fixture
 
-unset -f need_cmd banner check_installer_up_to_date check_bins_in_use use uname sysctl download
+unset -f need_cmd banner check_installer_up_to_date check_bins_in_use resolve_latest_release_tag use uname sysctl download
 
 if [ "$failures" -ne 0 ]; then
   printf '\n%d test(s) failed\n' "$failures"
