@@ -63,6 +63,10 @@ Install the Monad Foundry installer:
 curl -L https://raw.githubusercontent.com/category-labs/foundry/monad/foundryup/install | bash
 ```
 
+> [!IMPORTANT]
+> Existing users with the legacy `foundryup 1.5.0` launcher must run the installer command above
+> once. The legacy launcher cannot self-update to the new `1.5.0-monad-v1.0.0` version scheme.
+
 Then install Monad Foundry:
 
 ```sh
@@ -70,6 +74,7 @@ foundryup --network monad
 ```
 
 This installs all four binaries: `forge`, `cast`, `anvil`, and `chisel` with Monad support.
+The stable channel resolves to the latest published, immutable Monad Foundry release tag.
 
 > **Note:** The same installer also supports standard Foundry. Running `foundryup` without `--network monad` will install the official upstream Foundry release, so you can use both side by side.
 

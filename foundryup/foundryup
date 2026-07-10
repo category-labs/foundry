@@ -5,9 +5,9 @@
 
 set -eo pipefail
 
-# NOTE: if you make modifications to this script, please increment the version number.
-# WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.5.0"
+# NOTE: if you make modifications to this script, please increment the Monad fork version.
+# Format: <upstream-foundryup-version>-monad-v<fork-version>.
+FOUNDRYUP_INSTALLER_VERSION="1.5.0-monad-v1.0.0"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -381,14 +381,23 @@ main() {
     say "done!"
   # Install from Monad's fork of Foundry if --network monad is set
   elif [[ "$FOUNDRYUP_NETWORK" == "monad" ]]; then
-    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-stable-monad}
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-stable}
     FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
 
-    # Normalize versions (handle versions without v prefix)
-    if [[ "$FOUNDRYUP_VERSION" =~ ^nightly ]]; then
+    # Resolve stable/latest to the latest immutable versioned Monad release. Until the first
+    # release using the new tag scheme is published, retain the legacy stable-monad fallback.
+    if [[ "$FOUNDRYUP_VERSION" == "stable" || "$FOUNDRYUP_VERSION" == "latest" ]]; then
+      latest_tag=$(resolve_latest_release_tag "$FOUNDRYUP_REPO")
+      if is_monad_release_tag "$latest_tag"; then
+        FOUNDRYUP_VERSION="$latest_tag"
+        FOUNDRYUP_TAG="$latest_tag"
+      else
+        say "no versioned Monad release is marked latest; falling back to stable-monad"
+        FOUNDRYUP_VERSION="stable-monad"
+        FOUNDRYUP_TAG="stable-monad"
+      fi
+    elif [[ "$FOUNDRYUP_VERSION" =~ ^nightly ]]; then
       FOUNDRYUP_VERSION="nightly"
-    elif [[ "$FOUNDRYUP_VERSION" =~ ^stable ]]; then
-      FOUNDRYUP_VERSION="stable-monad"
     elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
       FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
       FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
@@ -550,7 +559,7 @@ update() {
   ensure download "$FOUNDRY_BIN_URL" "$tmp_file"
 
   # Extract new version from downloaded file.
-  new_version=$(grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$tmp_file" | cut -d'"' -f2)
+  new_version=$(extract_installer_version < "$tmp_file")
 
   # If the new version could not be determined, exit gracefully.
   # This prevents from upgrading to an empty or invalid version.
@@ -702,9 +711,9 @@ check_installer_up_to_date() {
   say "checking if foundryup is up to date..."
 
   if check_cmd curl; then
-    remote_version=$(curl -fsSL "$FOUNDRY_BIN_URL" | grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2)
+    remote_version=$(curl -fsSL "$FOUNDRY_BIN_URL" | extract_installer_version)
   else
-    remote_version=$(wget -qO- "$FOUNDRY_BIN_URL" | grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2)
+    remote_version=$(wget -qO- "$FOUNDRY_BIN_URL" | extract_installer_version)
   fi
 
   if [ -z "$remote_version" ]; then
@@ -730,35 +739,74 @@ Updating is highly recommended as it gives you access to the latest features and
   fi
 }
 
-# Compares two version strings in the format "major.minor.patch".
+# Extracts a Monad foundryup version assignment from stdin.
+extract_installer_version() {
+  sed -nE 's/^FOUNDRYUP_INSTALLER_VERSION="([0-9]+\.[0-9]+\.[0-9]+-monad-v[0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' \
+    | head -n1
+}
+
+# Compares versions in the format
+# "<upstream-major>.<upstream-minor>.<upstream-patch>-monad-v<fork-major>.<fork-minor>.<fork-patch>".
 # Returns 0 if $1 is greater than $2, 1 if $1 is less than $2, and 1 if they are equal.
-#
-# Assumes that the version strings are well-formed and contain three numeric components separated by dots.
-#
-# Example: version_gt "1.2.3" "1.2.4"
-#          returns 1 (1.2.3 < 1.2.4)
-#          version_gt "1.2.3" "1.2.3"
-#          returns 1 (1.2.3 == 1.2.3)
-#          version_gt "1.2.4" "1.2.3"
-#          returns 0 (1.2.4 > 1.2.3)
 version_gt() {
-  [ "$1" = "$2" ] && return 1
+  local version_pattern='^([0-9]+)\.([0-9]+)\.([0-9]+)-monad-v([0-9]+)\.([0-9]+)\.([0-9]+)$'
+  local -a left right
+  local i
 
-  IFS=. read -r major1 minor1 patch1 <<EOF
-$1
-EOF
-  IFS=. read -r major2 minor2 patch2 <<EOF
-$2
-EOF
+  [[ "$1" =~ $version_pattern ]] || return 1
+  left=("${BASH_REMATCH[@]:1}")
+  [[ "$2" =~ $version_pattern ]] || return 1
+  right=("${BASH_REMATCH[@]:1}")
 
-  [ "$major1" -gt "$major2" ] && return 0
-  [ "$major1" -lt "$major2" ] && return 1
-  [ "$minor1" -gt "$minor2" ] && return 0
-  [ "$minor1" -lt "$minor2" ] && return 1
-  [ "$patch1" -gt "$patch2" ] && return 0
-  [ "$patch1" -lt "$patch2" ] && return 1
+  for ((i = 0; i < 6; i++)); do
+    ((10#${left[$i]} > 10#${right[$i]})) && return 0
+    ((10#${left[$i]} < 10#${right[$i]})) && return 1
+  done
 
   return 1
+}
+
+# Returns whether $1 is a versioned Monad Foundry release tag.
+is_monad_release_tag() {
+  [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-monad-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+# Resolves the latest published full release tag for $1. Prefer GitHub's public web redirect to
+# avoid API rate limits, then fall back to the public API. Prints nothing if neither succeeds.
+resolve_latest_release_tag() {
+  local repo="$1"
+  local latest_url="https://github.com/${repo}/releases/latest"
+  local final_url=""
+  local tag=""
+
+  if check_cmd curl; then
+    final_url=$(curl -fsSIL -o /dev/null -w '%{url_effective}' "$latest_url" 2>/dev/null) || true
+  else
+    final_url=$(wget -q -O /dev/null --max-redirect=10 --server-response "$latest_url" 2>&1 \
+      | awk 'tolower($1) == "location:" { location = $2 } END { print location }' \
+      | tr -d '\r') || true
+  fi
+
+  tag="${final_url##*/releases/tag/}"
+  if [ -n "$tag" ] && [ "$tag" != "$final_url" ]; then
+    case "$tag" in
+      *[!A-Za-z0-9._-]*) ;;
+      *) printf '%s\n' "$tag"; return 0 ;;
+    esac
+  fi
+
+  if check_cmd curl; then
+    tag=$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null \
+      | awk '/"tag_name"[[:space:]]*:/ && !found { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); print; found=1 }') || true
+  else
+    tag=$(wget -qO- "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null \
+      | awk '/"tag_name"[[:space:]]*:/ && !found { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); print; found=1 }') || true
+  fi
+
+  case "$tag" in
+    ""|*[!A-Za-z0-9._-]*) return 0 ;;
+    *) printf '%s\n' "$tag" ;;
+  esac
 }
 
 check_bins_in_use() {
