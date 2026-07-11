@@ -1,0 +1,172 @@
+name: Monad Foundry Benchmarks
+
+# Trimmed fork of upstream's benchmarks workflow. Runs once per Monad release
+# (automatically on release tag push, or manually) to catch performance
+# regressions against the previous release: 'local' is built from the tagged
+# commit and compared against the previous release's published binaries, so it
+# runs in parallel with release.yml without depending on the new assets.
+# There is deliberately NO schedule trigger and no publish/commit job —
+# results are printed to the run log and uploaded as an artifact.
+# See Linear DO-322 (scope Depot usage to Monad releases).
+
+permissions: {}
+
+on:
+  push:
+    tags:
+      - "v*.*.*-monad-v*.*.*"
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: "Comma-separated Foundry versions to benchmark. Monad release tags (e.g. v1.7.1-monad-v1.0.0) are installed via `foundryup --network monad`; 'local' benches the HEAD of the ref this workflow runs on."
+        required: false
+        type: string
+      repos:
+        description: "Comma-separated repos to benchmark. Each entry: org/repo[:rev][ <extra args>]. Leave empty for the default list."
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  # Fallback "previous release" when no earlier monad tag can be resolved from
+  # git history (mirrors LAST_STABLE_VERSION in release.yml).
+  FALLBACK_PREV_VERSION: "v1.7.1-monad-v1.0.0"
+
+  # Repos to benchmark. Same format as upstream: org/repo[:rev][ <extra args>],
+  # anything after the first whitespace is appended to every benchmark command
+  # for that repo (used to skip tests that are broken/flaky across versions).
+  BENCH_REPOS: >-
+    vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest|Base58Test|LibStringTest',
+    ithacaxyz/account:v0.5.7,
+    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest'
+
+  # Keep in sync with release.yml so 'local' is built like released binaries.
+  RUST_PROFILE: dist
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
+
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: "sccache"
+  FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+
+jobs:
+  run-benchmarks:
+    name: Run Monad Benchmarks
+    runs-on: depot-ubuntu-24.04-32
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          # Full history so the previous release tag can be resolved.
+          fetch-depth: 0
+
+      - name: Resolve versions to benchmark
+        id: resolve
+        env:
+          INPUT_VERSIONS: ${{ github.event.inputs.versions }}
+        run: |
+          if [[ -n "$INPUT_VERSIONS" ]]; then
+            versions="$INPUT_VERSIONS"
+          else
+            # Previous monad release (excluding the tag being benchmarked, if
+            # any) vs the current checkout — same resolution as release.yml.
+            prev=$(git tag -l 'v*.*.*-monad-v*.*.*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -n1)
+            versions="${prev:-$FALLBACK_PREV_VERSION},local"
+          fi
+          echo "Benchmarking versions: $versions"
+          printf 'versions=%s\n' "$versions" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        with:
+          toolchain: stable
+
+      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+
+      - name: Setup foundryup
+        run: |
+          ./.github/scripts/setup-foundryup.sh
+          printf '%s\n' "$FOUNDRY_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Install Monad release versions
+        env:
+          VERSIONS: ${{ steps.resolve.outputs.versions }}
+        run: |
+          IFS=',' read -ra versions <<< "$VERSIONS"
+          for version in "${versions[@]}"; do
+            version="$(echo "$version" | xargs)"
+            [[ "$version" == "local" ]] && continue
+            echo "Installing $version from category-labs/foundry..."
+            foundryup --install "$version" --network monad
+          done
+
+      - name: Build and register 'local' version
+        if: contains(format(',{0},', steps.resolve.outputs.versions), ',local,')
+        run: |
+          # Build with the same profile/features as release.yml (incl. jemalloc
+          # on x86_64 Linux) so 'local' is comparable to released binaries.
+          cargo build --locked --profile "$RUST_PROFILE" \
+            --no-default-features --features "$RUST_FEATURES,jemalloc" \
+            --bin forge --bin cast --bin anvil --bin chisel
+          mkdir -p "$FOUNDRY_DIR/versions/local"
+          cp "target/$RUST_PROFILE"/{forge,cast,anvil,chisel} "$FOUNDRY_DIR/versions/local/"
+
+      - name: Build benchmark binary
+        run: cargo build --locked --release --bin foundry-bench
+
+      - name: Install hyperfine
+        run: |
+          curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
+          rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
+
+      - name: Run forge test benchmarks
+        env:
+          VERSIONS: ${{ steps.resolve.outputs.versions }}
+          REPOS: ${{ github.event.inputs.repos || env.BENCH_REPOS }}
+        run: |
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions "$VERSIONS" \
+            --repos "$REPOS" \
+            --benchmarks forge_test,forge_fuzz_test \
+            --output-file forge_test_bench.md \
+            --verbose
+
+      - name: Run forge build benchmarks
+        env:
+          VERSIONS: ${{ steps.resolve.outputs.versions }}
+          REPOS: ${{ github.event.inputs.repos || env.BENCH_REPOS }}
+        run: |
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions "$VERSIONS" \
+            --repos "$REPOS" \
+            --benchmarks forge_build_no_cache,forge_build_with_cache \
+            --output-file forge_build_bench.md \
+            --verbose
+
+      - name: Combine benchmark results
+        run: ./.github/scripts/combine-benchmarks.sh benches
+
+      - name: Print benchmark results
+        run: cat benches/LATEST.md
+
+      - name: Upload benchmark results as artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-results
+          path: |
+            benches/forge_test_bench.md
+            benches/forge_build_bench.md
+            benches/LATEST.md
