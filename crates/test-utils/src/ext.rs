@@ -128,13 +128,13 @@ impl ExtTester {
             let stdout = String::from_utf8(output.stdout).unwrap();
             let commit = stdout.lines().next().unwrap().split_whitespace().nth(1).unwrap();
             panic!("pin to latest commit: {commit}");
-        } else {
-            let mut git = Command::new("git");
-            git.current_dir(root).args(["checkout", self.rev]);
-            test_debug!("$ {git:?}");
-            let status = git.status().unwrap();
-            assert!(status.success(), "git checkout failed: {status}")
         }
+
+        let mut git = Command::new("git");
+        git.current_dir(root).args(["checkout", self.rev]);
+        test_debug!("$ {git:?}");
+        let status = git.status().unwrap();
+        assert!(status.success(), "git checkout failed: {status}");
 
         (prj, test_cmd)
     }
