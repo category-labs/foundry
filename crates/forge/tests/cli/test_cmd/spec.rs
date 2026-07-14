@@ -224,6 +224,19 @@ contract MonadEvmVersionTest is Test {
     cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"]).assert_success();
 });
 
+#[cfg(feature = "monad")]
+forgetest_init!(test_monad_reserve_tracker_updates_for_delegated_account, |prj, cmd| {
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Prague;
+        config.isolate = true;
+    });
+
+    let fixture = include_str!("../../fixtures/MonadReserveBalance.t.sol");
+    prj.add_test("MonadReserveBalance.t.sol", fixture);
+
+    cmd.args(["test", "--network", "monad", "--mc", "MonadReserveBalanceTest"]).assert_success();
+});
+
 forgetest_init!(test_set_evm_version_tempo_hardfork, |prj, cmd| {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
