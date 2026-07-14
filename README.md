@@ -17,6 +17,32 @@ Monad is a Layer-1 blockchain delivering high performance, true decentralization
 ### Monad EVM Execution
 - Monad-specific [opcode and precompile gas costs](https://docs.monad.xyz/developer-essentials/opcode-pricing), no gas refunds, increased bytecode limits (128KB code, 256KB initcode), and no EIP-4844 blob transactions. See [Monad EVM differences](https://docs.monad.xyz/developer-essentials/differences) for full details.
 
+### Reserve Balance Precompile (address `0x1001`)
+
+- Forge supports the [`dippedIntoReserve()`](https://github.com/monad-crypto/MIPs/blob/main/MIPS/MIP-4.md) signal in Monad tests. The signal reports whether the current execution state violates Monad's reserve-balance rules for any touched account.
+- Declare the method without `view`. MIP-4 requires a regular `CALL`; `STATICCALL` fails.
+
+```solidity
+interface IReserveBalance {
+    function dippedIntoReserve() external returns (bool);
+}
+```
+
+The delegated-account regression uses an isolated transaction with the delegation and opening balance established beforehand:
+
+```toml
+[profile.default]
+network = "monad"
+evm_version = "prague"
+isolate = true
+```
+
+Set the account's balance and attach its delegation in `setUp()`, then measure the reserve transition in the test call. With isolation enabled, each top-level call runs as a separate synthetic transaction. Keep before, during, and after checks for one reserve transition inside the same top-level call.
+
+This path is covered by a Forge regression on `v1.7.1-monad-v1.0.0`. The legacy `1.5.0-stable-monad` binary exposes the precompile but does not update its tracker for this delegated-account case. If `forge --version` reports that legacy release, follow the [installation](#installation) steps below to reinstall the launcher and upgrade.
+
+`vm.signAndAttachDelegation()` establishes delegation state for an in-process Forge test; it does not submit a type-4 authorization-list transaction through JSON-RPC. Use `anvil --monad` to test the local RPC transaction envelope, and use a live Monad network when the claim depends on public-node behavior or final protocol enforcement.
+
 ### Staking Precompile (address `0x1000`)
 - Full support for Monad staking precompile execution in tests/scripts via the Monad EVM stack.
 - Support for staking view functions (`getEpoch`, `getProposerValId`, `getValidator`, `getDelegator`, `getWithdrawalRequest`, `getConsensusValidatorSet`, `getSnapshotValidatorSet`, `getExecutionValidatorSet`, `getDelegations`, `getDelegators`) and state-changing functions (`addValidator`, `delegate`, `undelegate`, `withdraw`, `compound`, `claimRewards`, `changeCommission`, `externalReward`).
@@ -71,10 +97,12 @@ Then install Monad Foundry:
 
 ```sh
 foundryup --network monad
+forge --version
 ```
 
 This installs all four binaries: `forge`, `cast`, `anvil`, and `chisel` with Monad support.
 The stable channel resolves to the latest published, immutable Monad Foundry release tag.
+The version output should identify a versioned Monad release, such as `1.7.1-monad-v1.0.0`, rather than `1.5.0-stable-monad`.
 
 > **Note:** The same installer also supports standard Foundry. Running `foundryup` without `--network monad` will install the official upstream Foundry release, so you can use both side by side.
 
