@@ -7,8 +7,12 @@ use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
 use foundry_config::Config;
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
-    core::evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, OpEvmNetwork, TempoEvmNetwork},
+    core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     opts::EvmOpts,
 };
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
@@ -17,9 +21,9 @@ use yansi::Paint;
 
 /// Run the `chisel` command line interface.
 pub fn run() -> Result<()> {
-    setup()?;
-
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Chisel>();
+
+    setup()?;
 
     let args = Chisel::parse();
     args.global.init()?;
@@ -54,16 +58,18 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     evm_opts.infer_network_from_fork().await;
     config.networks = evm_opts.networks;
 
-    if evm_opts.networks.is_optimism() {
-        return run_command_with_network::<OpEvmNetwork>(args, config, evm_opts).await;
+    if evm_opts.networks.is_tempo() {
+        return run_command_with_network::<TempoEvmNetwork>(args, config, evm_opts).await;
     }
 
+    #[cfg(feature = "monad")]
     if evm_opts.networks.is_monad() {
         return run_command_with_network::<MonadEvmNetwork>(args, config, evm_opts).await;
     }
 
-    if evm_opts.networks.is_tempo() {
-        return run_command_with_network::<TempoEvmNetwork>(args, config, evm_opts).await;
+    #[cfg(feature = "optimism")]
+    if evm_opts.networks.is_optimism() {
+        return run_command_with_network::<OpEvmNetwork>(args, config, evm_opts).await;
     }
 
     run_command_with_network::<EthEvmNetwork>(args, config, evm_opts).await
@@ -106,7 +112,8 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
     // REPL loop.
     let mut interrupt = false;
     loop {
-        match rl.readline(&dispatcher.get_prompt()) {
+        let prompt = dispatcher.get_prompt();
+        match rl.readline(prompt.as_ref()) {
             Ok(line) => {
                 debug!("dispatching next line: {line}");
                 // Clear interrupt flag.

@@ -27,12 +27,59 @@ const SETTINGS_OVERRIDES_KEYS: &[&str] =
 /// Allowed keys for VyperConfig.
 /// Required because VyperConfig uses `skip_serializing_if = "Option::is_none"` on all fields,
 /// causing the default serialization to produce an empty dict.
-const VYPER_KEYS: &[&str] = &["optimize", "path", "experimental_codegen"];
+const VYPER_KEYS: &[&str] = &[
+    "optimize",
+    "opt_level",
+    "optLevel",
+    "path",
+    "experimental_codegen",
+    "venom_experimental",
+    "debug",
+    "enable_decimals",
+    "venom",
+];
 
 /// Allowed keys for DocConfig.
 /// Required because DocConfig uses `skip_serializing_if = "Option::is_none"` on some fields
 /// (`repository`, `path`), whose defaults are `None` and thus excluded from serialization.
 const DOC_KEYS: &[&str] = &["out", "title", "book", "homepage", "repository", "path", "ignore"];
+
+/// Allowed keys for SymbolicConfig.
+/// Required because some compatibility aliases and empty length collections are skipped by default
+/// serialization, but they are still valid user-facing config keys.
+const SYMBOLIC_KEYS: &[&str] = &[
+    "enabled",
+    "seed_corpus",
+    "use_fuzz_corpus",
+    "corpus_seed_limit",
+    "use_fuzz_frontiers",
+    "frontier_limit",
+    "frontier_ids",
+    "frontier_pcs",
+    "frontier_selectors",
+    "solver",
+    "solver_command",
+    "solver_portfolio",
+    "timeout",
+    "loop",
+    "depth",
+    "width",
+    "max_depth",
+    "max_paths",
+    "invariant_depth",
+    "exploration_order",
+    "max_solver_queries",
+    "default_dynamic_length",
+    "max_dynamic_length",
+    "array_lengths",
+    "dynamic_lengths",
+    "default_array_lengths",
+    "default_bytes_lengths",
+    "max_calldata_bytes",
+    "symbolic_call_targets",
+    "dump_smt",
+    "storage_layout",
+];
 
 /// Reserved keys that should not trigger unknown key warnings.
 const RESERVED_KEYS: &[&str] = &["extends"];
@@ -103,15 +150,13 @@ impl<P: Provider> WarningsProvider<P> {
             .filter(|(profile, _)| **profile == Config::PROFILE_SECTION)
             .map(|(_, dict)| dict);
 
-        out.extend(profiles.clone().flat_map(BTreeMap::keys).filter_map(deprecated_key_warning));
-        out.extend(
-            profiles
-                .clone()
-                .filter_map(|dict| dict.get(self.profile.as_str().as_str()))
-                .filter_map(Value::as_dict)
-                .flat_map(BTreeMap::keys)
-                .filter_map(deprecated_key_warning),
-        );
+        let deprecated_profile_keys = profiles
+            .clone()
+            .flat_map(|dict| {
+                dict.keys().chain(dict.values().filter_map(Value::as_dict).flat_map(BTreeMap::keys))
+            })
+            .collect::<BTreeSet<_>>();
+        out.extend(deprecated_profile_keys.into_iter().filter_map(deprecated_key_warning));
 
         // Add warning for unknown keys within profiles (root keys only here).
         if let Ok(default_map) = figment::providers::Serialized::defaults(&Config::default()).data()
@@ -270,6 +315,8 @@ impl<P: Provider> WarningsProvider<P> {
                 VYPER_KEYS.iter().map(|s| s.to_string()).collect()
             } else if key == "doc" {
                 DOC_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if key == "symbolic" {
+                SYMBOLIC_KEYS.iter().map(|s| s.to_string()).collect()
             } else {
                 let Some(default_value) = default_dict.get(key) else {
                     continue;

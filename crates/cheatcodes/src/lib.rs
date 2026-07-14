@@ -54,12 +54,15 @@ pub use inspector::CheatcodeAnalysis;
 
 mod json;
 
+#[cfg(feature = "monad")]
 mod monad;
 
 mod script;
 pub use script::{Wallets, WalletsInner};
 
 mod string;
+
+mod tempo;
 
 mod test;
 pub use test::expect::ExpectedCallTracker;

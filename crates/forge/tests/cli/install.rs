@@ -5,7 +5,7 @@ use foundry_cli::utils::{Git, Submodules};
 use foundry_compilers::artifacts::Remapping;
 use foundry_config::Config;
 use foundry_test_utils::util::{
-    ExtTester, TestCommand, forge_std_revision, pretty_err, read_string,
+    ExtTester, FORGE_STD_REVISION, TestCommand, pretty_err, read_string,
 };
 use semver::Version;
 use std::{
@@ -31,19 +31,23 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
 
     // Build the project
-    cmd.arg("build").assert_success().stdout_eq(str![[r#"
-Missing dependencies found. Installing now...
-
-[UPDATING_DEPENDENCIES]
+    cmd.arg("build")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
+"#]])
+        .stderr_eq(str![[r#"
+Missing dependencies found. Installing now...
+[UPDATING_DEPENDENCIES]
+...
 "#]]);
 
     // assert lockfile
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert_eq!(forge_std.rev(), forge_std_revision());
+    assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
 
     // Expect compilation to be skipped as no files have changed
     cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
@@ -61,10 +65,9 @@ forgetest_init!(can_install_missing_deps_test, |prj, cmd| {
     let forge_std_dir = prj.root().join("lib/forge-std");
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Missing dependencies found. Installing now...
-
-[UPDATING_DEPENDENCIES]
+    cmd.arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -76,11 +79,16 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
+"#]])
+        .stderr_eq(str![[r#"
+Missing dependencies found. Installing now...
+[UPDATING_DEPENDENCIES]
+...
 "#]]);
 
     // assert lockfile
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert_eq!(forge_std.rev(), forge_std_revision());
+    assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
 });
 
 // test to check that install/remove works properly
@@ -95,13 +103,16 @@ forgetest!(can_install_and_remove, |prj, cmd| {
     let forge_std_mod = git_mod.join("forge-std");
 
     let install = |cmd: &mut TestCommand| {
-        cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
-            str![[r#"
+        cmd.forge_fuse()
+            .args(["install", "foundry-rs/forge-std"])
+            .assert_success()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
 
-"#]],
-        );
+"#]]);
 
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
@@ -111,12 +122,14 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     };
 
     let remove = |cmd: &mut TestCommand, target: &str| {
-        cmd.forge_fuse().args(["remove", "--force", target]).assert_success().stdout_eq(str![[
-            r#"
+        cmd.forge_fuse()
+            .args(["remove", "--force", target])
+            .assert_success()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
 Removing 'forge-std' in [..], (url: https://github.com/foundry-rs/forge-std, tag: None)
 
-"#
-        ]]);
+"#]]);
 
         assert!(!forge_std.exists());
         assert!(!forge_std_mod.exists());
@@ -165,11 +178,15 @@ forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
     let forge_std_mod = git_mod.join("forge-std");
 
     let install = |cmd: &mut TestCommand| {
-        cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
-            str![[r#"
+        cmd.forge_fuse()
+            .args(["install", "foundry-rs/forge-std"])
+            .assert_success()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std tag=[..]"#]],
-        );
+...
+    Installed forge-std tag=[..]
+"#]]);
 
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
@@ -391,13 +408,16 @@ forgetest!(
         let package_mod = git_mod.join("forge-5980-test");
 
         // install main dependency
-        cmd.forge_fuse().args(["install", "evalir/forge-5980-test"]).assert_success().stdout_eq(
-            str![[r#"
+        cmd.forge_fuse()
+            .args(["install", "evalir/forge-5980-test"])
+            .assert_success()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
 Installing forge-5980-test in [..] (url: https://github.com/evalir/forge-5980-test, tag: None)
+...
     Installed forge-5980-test
 
-"#]],
-        );
+"#]]);
 
         // assert paths exist
         assert!(package.exists());
@@ -640,13 +660,13 @@ forgetest_init!(sync_on_forge_update, |prj, cmd| {
     let git = Git::new(prj.root());
 
     let submodules = git.submodules().unwrap();
-    assert!(submodules.0.iter().any(|s| s.rev() == forge_std_revision()));
+    assert!(submodules.0.iter().any(|s| s.rev() == FORGE_STD_REVISION));
 
     let mut lockfile = Lockfile::new(prj.root());
     lockfile.read().unwrap();
 
     let forge_std = lockfile.get(&PathBuf::from("lib/forge-std")).unwrap();
-    assert!(forge_std.rev() == forge_std_revision());
+    assert!(forge_std.rev() == FORGE_STD_REVISION);
 
     // cd into the forge-std submodule
     let forge_std_path = prj.root().join("lib/forge-std");
@@ -671,7 +691,8 @@ forgetest_init!(sync_on_forge_update, |prj, cmd| {
     cmd.forge_fuse()
         .args(["update", "foundry-rs/forge-std@master"])
         .assert_success()
-        .stdout_eq(expected_output);
+        .stdout_eq(str![""])
+        .stderr_eq(expected_output);
 
     let git = Git::new(&forge_std_path);
     assert_eq!(
@@ -701,4 +722,9 @@ forgetest_init!(sync_on_forge_update, |prj, cmd| {
         origin_master_head,
         "Lockfile rev should match resolved origin/master after update"
     );
+});
+
+// Checks that `--no-commit` is accepted as a noop backwards-compatibility flag
+forgetest_init!(can_install_with_no_commit, |_prj, cmd| {
+    cmd.args(["install", "--no-commit"]).assert_success();
 });

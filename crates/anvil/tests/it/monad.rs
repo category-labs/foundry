@@ -1,4 +1,4 @@
-use alloy_consensus::{SidecarBuilder, SimpleCoder};
+use alloy_consensus::{SidecarBuilder, SimpleCoder, Transaction};
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::{Address, Bytes, U256, address, hex};
 use alloy_provider::Provider;
@@ -7,6 +7,7 @@ use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::MonadHardfork;
 
+const STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
 const RESERVE_BALANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001001");
 const DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
 const EIP170_CODE_SIZE_LIMIT: usize = 0x6000;
@@ -26,6 +27,27 @@ async fn monad_nine_exposes_reserve_balance_precompile_for_calls() {
     let result = provider.call(tx.into()).await.unwrap();
 
     assert_eq!(result, Bytes::from(vec![0; 32]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_nine_config_reports_monad_precompiles() {
+    let (api, _handle) = spawn(monad_nine_config()).await;
+    let config = api.config().unwrap();
+
+    assert_eq!(config.current.precompiles.get("MonadStaking"), Some(&STAKING_ADDRESS));
+    assert_eq!(
+        config.current.precompiles.get("MonadReserveBalance"),
+        Some(&RESERVE_BALANCE_ADDRESS)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_eight_config_filters_reserve_balance_precompile() {
+    let (api, _handle) = spawn(monad_eight_config()).await;
+    let config = api.config().unwrap();
+
+    assert_eq!(config.current.precompiles.get("MonadStaking"), Some(&STAKING_ADDRESS));
+    assert!(!config.current.precompiles.contains_key("MonadReserveBalance"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -102,7 +124,22 @@ async fn monad_rejects_tx_gas_limit_above_monad_cap() {
         .with_gas_limit(MONAD_TX_GAS_LIMIT_CAP + 1);
     let err = provider.send_transaction(tx.into()).await.unwrap_err().to_string();
 
-    assert!(err.contains("tx.gas_limit > env.cfg.tx_gas_limit_cap"), "unexpected error: {err}");
+    assert!(err.contains("tx.gas_limit > resolved tx gas limit cap"), "unexpected error: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_omitted_gas_fallback_uses_resolved_tx_gas_cap() {
+    let config = monad_eight_config().enable_tx_gas_limit(true).with_gas_limit(Some(40_000_000));
+    let (_api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+
+    let tx =
+        TransactionRequest::default().with_from(from).with_input(Bytes::from(hex!("60006000fd")));
+    let pending = provider.send_transaction(tx.into()).await.unwrap();
+    let sent = provider.get_transaction_by_hash(*pending.tx_hash()).await.unwrap().unwrap();
+
+    assert_eq!(sent.inner.gas_limit(), MONAD_TX_GAS_LIMIT_CAP);
 }
 
 #[tokio::test(flavor = "multi_thread")]
