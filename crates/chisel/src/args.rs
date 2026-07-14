@@ -48,6 +48,7 @@ macro_rules! try_cf {
 }
 
 /// Run the subcommand.
+#[allow(clippy::large_stack_frames)]
 pub async fn run_command(args: Chisel) -> Result<()> {
     // Load configuration
     let (mut config, mut evm_opts) = args.load_config_and_evm_opts()?;

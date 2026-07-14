@@ -158,12 +158,6 @@ impl ExtTester {
         let joined_path = std::env::join_paths(new_paths).expect("failed to join PATH");
         test_cmd.env("PATH", joined_path);
 
-        let mut git = Command::new("git");
-        git.current_dir(root).args(["checkout", self.rev]);
-        test_debug!("$ {git:?}");
-        let status = git.status().unwrap();
-        assert!(status.success(), "git checkout failed: {status}");
-
         (prj, test_cmd)
     }
 

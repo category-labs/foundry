@@ -67,7 +67,9 @@ class Expanded:
 
 is_pr = os.environ.get("EVENT_NAME") == "pull_request"
 t_linux_x86 = Target(
-    "depot-ubuntu-latest-16", "x86_64-unknown-linux-gnu", "linux-amd64"
+    "ubuntu-latest" if is_pr else "depot-ubuntu-latest-16",
+    "x86_64-unknown-linux-gnu",
+    "linux-amd64",
 )
 t_linux_arm = Target(
     "depot-ubuntu-latest-arm-16", "aarch64-unknown-linux-gnu", "linux-aarch64"
