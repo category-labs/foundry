@@ -111,6 +111,8 @@ def main():
 
                 name = case.name
                 flags = f"-E '{case.filter}'"
+                if target == t_linux_x86 and case.name == "all":
+                    flags += " --all-features"
                 if case.n_partitions > 1:
                     s = f"{partition}/{case.n_partitions}"
                     name += f" ({s})"
