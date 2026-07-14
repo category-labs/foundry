@@ -6,7 +6,9 @@ use std::{
     path::Path,
 };
 
-use alloy_consensus::{BlockBody, Header};
+use alloy_consensus::BlockBody;
+#[cfg(test)]
+use alloy_consensus::Header;
 use alloy_eips::eip4895::Withdrawals;
 use alloy_network::Network;
 use alloy_primitives::{
@@ -22,7 +24,7 @@ use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
 };
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
@@ -203,7 +205,7 @@ pub trait Db:
             B256::from_slice(&keccak256(code.as_ref())[..])
         };
         info.code_hash = code_hash;
-        info.code = Some(Bytecode::new_raw(alloy_primitives::Bytes(code.0)));
+        info.code = Some(Bytecode::new_raw(code));
         self.insert_account(address, info);
         Ok(())
     }
@@ -243,7 +245,7 @@ pub trait Db:
                     code: if account.code.0.is_empty() {
                         None
                     } else {
-                        Some(Bytecode::new_raw(alloy_primitives::Bytes(account.code.0)))
+                        Some(Bytecode::new_raw(account.code))
                     },
                     nonce,
                     account_id: None,
@@ -656,9 +658,9 @@ pub enum SerializableTransactionType {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SerializableBlock {
-    pub header: Header,
+    pub header: FoundryHeader,
     pub transactions: Vec<SerializableTransactionType>,
-    pub ommers: Vec<Header>,
+    pub ommers: Vec<FoundryHeader>,
     #[serde(default)]
     pub withdrawals: Option<Withdrawals>,
 }
@@ -820,7 +822,7 @@ mod test {
             ommers: vec![],
             withdrawals: Some(vec![withdrawal].into()),
         };
-        let block = Block::new(header, body);
+        let block = Block::new(header.into(), body);
 
         // convert to SerializableBlock and back
         let serializable = SerializableBlock::from(block);

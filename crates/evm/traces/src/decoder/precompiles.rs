@@ -8,9 +8,11 @@ use foundry_evm_core::{
         BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, CELO_TRANSFER, EC_ADD, EC_MUL, EC_PAIRING,
         EC_RECOVER, IDENTITY, MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
-    tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS},
+    tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, active_tempo_precompile_addresses},
 };
+use foundry_evm_hardforks::TempoHardfork;
 use itertools::Itertools;
+#[cfg(feature = "monad")]
 use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
 use revm_inspectors::tracing::types::DecodedCallTrace;
 
@@ -55,7 +57,11 @@ interface Precompiles {
 }
 use Precompiles::*;
 
-pub(super) fn is_known_precompile(address: Address, chain_id: Option<u64>) -> bool {
+pub(crate) fn is_known_precompile(
+    address: Address,
+    chain_id: Option<u64>,
+    tempo_hardfork: Option<TempoHardfork>,
+) -> bool {
     // Standard EVM precompiles (all chains).
     let is_standard = address[..19].iter().all(|&x| x == 0)
         && matches!(
@@ -83,12 +89,18 @@ pub(super) fn is_known_precompile(address: Address, chain_id: Option<u64>) -> bo
         return true;
     }
     // Tempo precompiles and TIP20 fee tokens (only on Tempo chains).
-    if chain_id.is_some_and(|id| Chain::from_id(id).is_tempo())
-        && (TEMPO_PRECOMPILE_ADDRESSES.contains(&address) || TEMPO_TIP20_TOKENS.contains(&address))
-    {
+    let is_tempo_precompile = match tempo_hardfork {
+        Some(hardfork) => active_tempo_precompile_addresses(hardfork).any(|addr| addr == address),
+        None => TEMPO_PRECOMPILE_ADDRESSES.contains(&address),
+    };
+    let is_tempo_context = chain_id
+        .map(|id| Chain::from_id(id).is_tempo())
+        .unwrap_or_else(|| tempo_hardfork.is_some());
+    if is_tempo_context && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address)) {
         return true;
     }
     // Monad precompiles (only on Monad chains).
+    #[cfg(feature = "monad")]
     if chain_id.is_some_and(|id| {
         matches!(Chain::from_id(id).named(), Some(NamedChain::Monad | NamedChain::MonadTestnet))
     }) && matches!(address, STAKING_ADDRESS | RESERVE_BALANCE_ADDRESS)
@@ -106,8 +118,12 @@ pub(super) fn is_known_precompile(address: Address, chain_id: Option<u64>) -> bo
 }
 
 /// Tries to decode a precompile call. Returns `Some` if successful.
-pub(super) fn decode(trace: &CallTrace, chain_id: Option<u64>) -> Option<DecodedCallTrace> {
-    if !is_known_precompile(trace.address, chain_id) {
+pub(super) fn decode(
+    trace: &CallTrace,
+    chain_id: Option<u64>,
+    tempo_hardfork: Option<TempoHardfork>,
+) -> Option<DecodedCallTrace> {
+    if !is_known_precompile(trace.address, chain_id, tempo_hardfork) {
         return None;
     }
 

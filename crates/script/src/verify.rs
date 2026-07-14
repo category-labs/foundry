@@ -98,7 +98,8 @@ impl VerifyBundle {
     pub fn set_chain(&mut self, config: &Config, chain: Chain) {
         // If dealing with multiple chains, we need to be able to change in between the config
         // chain_id.
-        self.etherscan.key = config.get_etherscan_api_key(Some(chain));
+        self.etherscan.key =
+            config.get_etherscan_api_key(Some(chain)).or_else(|| config.etherscan_api_key.clone());
         self.etherscan.chain = Some(chain);
     }
 
@@ -158,11 +159,13 @@ impl VerifyBundle {
                     force: false,
                     skip_is_verified_check: true,
                     watch: true,
+                    print_submission_result_to_stdout: false,
                     retry: self.retry,
                     libraries: libraries.to_vec(),
                     root: None,
                     verifier: self.verifier.clone(),
                     via_ir: self.via_ir,
+                    license_type: None,
                     evm_version: Some(evm_version),
                     show_standard_json_input: false,
                     guess_constructor_args: false,
@@ -189,7 +192,8 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 
     verify.set_chain(config, sequence.chain.into());
 
-    if verify.etherscan.has_key() || verify.verifier.verifier != VerificationProviderType::Etherscan
+    if verify.etherscan.has_key()
+        || verify.verifier.effective_type() != VerificationProviderType::Etherscan
     {
         trace!(target: "script", "prepare future verifications");
 
@@ -245,7 +249,7 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 
         let num_verifications = future_verifications.len();
         let mut num_of_successful_verifications = 0;
-        sh_println!("##\nStart verification for ({num_verifications}) contracts")?;
+        sh_status!("##\nStart verification for ({num_verifications}) contracts")?;
         for verification in future_verifications {
             match verification.await {
                 Ok(_) => {
@@ -263,7 +267,7 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
             ));
         }
 
-        sh_println!("All ({num_verifications}) contracts were verified!")?;
+        sh_status!("All ({num_verifications}) contracts were verified!")?;
     }
 
     Ok(())

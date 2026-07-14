@@ -137,9 +137,13 @@ impl EvmOpts {
     /// [`NetworkConfigs::with_chain_id`] to auto-enable the correct network
     /// (e.g. Tempo, OP Stack) based on the chain ID.
     pub async fn infer_network_from_fork(&mut self) {
+        #[cfg(feature = "optimism")]
+        let already_op = self.networks.is_optimism();
+        #[cfg(not(feature = "optimism"))]
+        let already_op = false;
         if !self.networks.is_tempo()
-            && !self.networks.is_optimism()
             && !self.networks.is_monad()
+            && !already_op
             && let Some(ref fork_url) = self.fork_url
             && let Ok(provider) = self.fork_provider_with_url::<AnyNetwork>(fork_url)
             && let Ok(chain_id) = provider.get_chain_id().await
@@ -151,6 +155,7 @@ impl EvmOpts {
                 {
                     match node_info.network.as_deref() {
                         Some("tempo") => self.networks = NetworkConfigs::with_tempo(),
+                        #[cfg(feature = "monad")]
                         Some("monad") => self.networks = NetworkConfigs::with_monad(),
                         _ => {}
                     }
@@ -478,6 +483,7 @@ mod tests {
 
         // Plain anvil (chain id 31337) without tempo flag -> Ethereum (no network flags set).
         assert!(!evm_opts.networks.is_tempo());
+        #[cfg(feature = "optimism")]
         assert!(!evm_opts.networks.is_optimism());
         assert!(!evm_opts.networks.is_celo());
         assert_eq!(evm_opts.networks, NetworkConfigs::default());
@@ -515,6 +521,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "monad")]
     async fn infer_network_monad_anvil_via_node_info() {
         let (_api, handle) = anvil::spawn(anvil::NodeConfig::test_monad()).await;
 
@@ -530,6 +537,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "monad")]
     async fn infer_network_monad_anvil_skips_rpc_when_already_set() {
         // Use a URL that would fail if any RPC call were attempted (connection refused).
         // This proves the early-return guard prevents all network requests.

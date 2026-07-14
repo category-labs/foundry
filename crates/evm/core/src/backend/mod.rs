@@ -8,7 +8,7 @@ use crate::{
     },
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, HaltReasonFor, PrecompilesFor, SpecFor, TxEnvFor,
+        FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
@@ -20,20 +20,19 @@ use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, TransactionResponse,
 };
-use alloy_primitives::{Address, B256, TxKind, U256, keccak256, uint};
+use alloy_primitives::{Address, B256, TxKind, U256, keccak256, map::AddressSet, uint};
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 pub use foundry_fork_db::{BlockchainDb, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta};
-use itertools::Itertools;
 use revm::{
     Database, DatabaseCommit, JournalEntry,
     bytecode::Bytecode,
     context::{Block, BlockEnv, CfgEnv, ContextTr, JournalInner, Transaction},
     context_interface::{journaled_state::account::JournaledAccountTr, result::ResultAndState},
-    database::{CacheDB, DatabaseRef, EmptyDB},
+    database::{AccountState, CacheDB, DatabaseRef, EmptyDB},
     primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log},
-    state::{Account, AccountInfo, EvmState, EvmStorageSlot},
+    state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -242,6 +241,11 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
     /// Returns the Fork url that's currently used in the database, if fork mode is on
     fn active_fork_url(&self) -> Option<String>;
 
+    /// Returns the active fork's current fork block number, if any.
+    fn active_fork_block_number(&self) -> Option<u64> {
+        None
+    }
+
     /// Whether the database is currently in forked mode.
     fn is_forked_mode(&self) -> bool {
         self.active_fork_id().is_some()
@@ -312,6 +316,14 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
 
     /// Returns true if the given account is currently marked as persistent.
     fn is_persistent(&self, acc: &Address) -> bool;
+
+    /// Drops cached account info for `address` on the active fork so the next read re-fetches it
+    /// from the node (used after out-of-band mutations like `anvil_setBalance` via `vm.rpc`).
+    fn invalidate_fork_cache_account(&mut self, address: Address);
+
+    /// Like [`invalidate_fork_cache_account`](Self::invalidate_fork_cache_account), but for a
+    /// single storage slot.
+    fn invalidate_fork_cache_storage(&mut self, address: Address, slot: U256);
 
     /// Revokes persistent status from the given account.
     fn remove_persistent_account(&mut self, account: &Address) -> bool;
@@ -835,7 +847,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Returns true if the address is a precompile
     pub fn is_existing_precompile(&self, addr: &Address) -> bool {
-        self.inner.precompiles().addresses().contains(addr)
+        self.inner.precompile_addresses().contains(addr)
     }
 
     /// Sets the initial journaled state to use when initializing forks
@@ -1232,8 +1244,12 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
 
         self.active_fork_ids = Some((id, idx));
         // Update current environment with environment of newly selected fork.
+        // Preserve the configured spec (evm_version) from the current environment — the fork's
+        // evm_env is built with SPEC::default() and must not override the user's hardfork setting.
+        let preserved_spec = evm_env.cfg_env.spec;
         tx_env.set_chain_id(Some(fork_evm_env.cfg_env.chain_id));
         *evm_env = fork_evm_env;
+        evm_env.cfg_env.set_spec_and_mainnet_gas_params(preserved_spec);
 
         Ok(())
     }
@@ -1259,7 +1275,9 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             if active_id == id {
                 // need to update the block's env settings right away, which is otherwise set when
                 // forks are selected `select_fork`
+                let preserved_spec = evm_env.cfg_env.spec;
                 *evm_env = fork_env;
+                evm_env.cfg_env.set_spec_and_mainnet_gas_params(preserved_spec);
 
                 // we also need to update the journaled_state right away, this has essentially the
                 // same effect as selecting (`select_fork`) by discarding
@@ -1417,6 +1435,27 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         self.forks.get_fork_url(fork.clone()).ok()?
     }
 
+    fn active_fork_block_number(&self) -> Option<u64> {
+        let fork = self.inner.issued_local_fork_ids.get(&self.active_fork_id()?)?;
+        let fork_block = fork_block_number(fork);
+        let env_block = self
+            .forks
+            .get_evm_env(fork.clone())
+            .ok()
+            .flatten()
+            .map(|env| env.block_env.number().saturating_to::<u64>());
+
+        // On Arbitrum, `fork_block` is the L2 fork pin while `env_block` can be remapped to the
+        // lower L1 block number. For tx-level forks, the fork pin is the parent state block while
+        // the env is updated to the transaction's block. The larger value is the current L2 block.
+        match (fork_block, env_block) {
+            (Some(fork_block), Some(env_block)) => Some(fork_block.max(env_block)),
+            (Some(fork_block), None) => Some(fork_block),
+            (None, Some(env_block)) => Some(env_block),
+            (None, None) => None,
+        }
+    }
+
     fn ensure_fork(&self, id: Option<LocalForkId>) -> eyre::Result<LocalForkId> {
         if let Some(id) = id {
             if self.inner.issued_local_fork_ids.contains_key(&id) {
@@ -1520,7 +1559,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
                         EvmStorageSlot::new_changed(
                             acc.storage.get(&slot).map(|s| s.present_value).unwrap_or_default(),
                             U256::from_be_bytes(value.0),
-                            0,
+                            TransactionId::ZERO,
                         ),
                     );
                 }
@@ -1539,6 +1578,35 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     fn add_persistent_account(&mut self, account: Address) -> bool {
         trace!(?account, "add persistent account");
         self.inner.persistent_accounts.insert(account)
+    }
+
+    fn invalidate_fork_cache_account(&mut self, address: Address) {
+        let Some(fork_db) = self.active_fork_db_mut() else { return };
+        trace!(?address, "invalidate fork cache account");
+        fork_db.db.data().accounts.write().remove(&address);
+        // Keep the local entry if it holds in-script modifications (e.g. `vm.deal`).
+        if fork_db
+            .cache
+            .accounts
+            .get(&address)
+            .is_some_and(|account| account.account_state == AccountState::None)
+        {
+            fork_db.cache.accounts.remove(&address);
+        }
+    }
+
+    fn invalidate_fork_cache_storage(&mut self, address: Address, slot: U256) {
+        let Some(fork_db) = self.active_fork_db_mut() else { return };
+        trace!(?address, ?slot, "invalidate fork cache storage");
+        if let Some(storage) = fork_db.db.data().storage.write().get_mut(&address) {
+            storage.remove(&slot);
+        }
+        // Keep the local slot if the account holds in-script modifications.
+        if let Some(account) = fork_db.cache.accounts.get_mut(&address)
+            && account.account_state == AccountState::None
+        {
+            account.storage.remove(&slot);
+        }
     }
 
     fn remove_persistent_account(&mut self, account: &Address) -> bool {
@@ -1955,12 +2023,12 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         self.issued_local_fork_ids.is_empty()
     }
 
-    pub fn precompiles(&self) -> PrecompilesFor<FEN> {
+    pub fn precompile_addresses(&self) -> AddressSet {
         let evm = FEN::EvmFactory::default().create_evm(
             EmptyDB::default(),
             EvmEnv::new(CfgEnv::new_with_spec(self.spec_id), Default::default()),
         );
-        evm.precompiles().clone()
+        evm.precompiles().addresses().copied().collect()
     }
 
     /// Returns a new, empty, `JournaledState` with set precompiles
@@ -1970,9 +2038,8 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
             journal_inner.set_spec_id(self.spec_id.into());
             journal_inner
         };
-        journal
-            .warm_addresses
-            .set_precompile_addresses(self.precompiles().addresses().copied().collect());
+        let precompile_addresses = self.precompile_addresses();
+        journal.warm_addresses.set_precompile_addresses(&precompile_addresses);
         journal
     }
 }
@@ -2136,7 +2203,7 @@ pub fn update_state<DB: Database>(
     persistent_accounts: Option<&HashSet<Address>>,
 ) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
-        if !persistent_accounts.is_some_and(|accounts| accounts.contains(addr)) {
+        if persistent_accounts.is_none_or(|accounts| !accounts.contains(addr)) {
             acc.info = db.basic(*addr)?.unwrap_or_default();
             for (key, val) in &mut acc.storage {
                 val.present_value = db.storage(*addr, *key)?;
@@ -2160,9 +2227,16 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     fork.refresh_journaled_states(journaled_state, persistent_accounts)
 }
 
+fn fork_block_number(fork: &ForkId) -> Option<u64> {
+    let (_, block) = fork.as_str().rsplit_once('@')?;
+    let block = block.split_once('-').map_or(block, |(block, _)| block);
+    let block = block.strip_prefix("0x")?;
+    u64::from_str_radix(block, 16).ok()
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{backend::Backend, evm::EthEvmNetwork, opts::EvmOpts};
+    use crate::{backend::Backend, evm::EthEvmNetwork, fork::ForkId, opts::EvmOpts};
     use alloy_primitives::{U256, address};
     use alloy_provider::Provider;
     use foundry_common::provider::get_http_provider;
@@ -2215,5 +2289,16 @@ mod tests {
         assert!(db.accounts().read().contains_key(&address));
         assert!(db.storage().read().contains_key(&address));
         assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);
+    }
+
+    #[test]
+    fn parses_fork_block_number_from_fork_id() {
+        let fork = ForkId::new("https://example.com/@rpc", Some(75_219_831));
+        assert_eq!(super::fork_block_number(&fork), Some(75_219_831));
+        assert_eq!(
+            super::fork_block_number(&format!("{}-1", fork.as_str()).into()),
+            Some(75_219_831)
+        );
+        assert_eq!(super::fork_block_number(&ForkId::new("https://example.com", None)), None);
     }
 }

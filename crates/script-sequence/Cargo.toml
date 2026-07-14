@@ -27,3 +27,8 @@ revm-inspectors.workspace = true
 
 alloy-network.workspace = true
 alloy-primitives.workspace = true
+
+[features]
+default = ["optimism"]
+monad = ["foundry-common/monad"]
+optimism = ["foundry-common/optimism"]

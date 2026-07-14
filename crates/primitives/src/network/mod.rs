@@ -1,11 +1,21 @@
 use alloy_network::Network;
 
+mod header;
+#[cfg(feature = "optimism")]
+mod optimism;
 mod receipt;
 
 use alloy_provider::fillers::{
     BlobGasFiller, ChainIdFiller, GasFiller, JoinFill, NonceFiller, RecommendedFillers,
 };
+pub use header::*;
+#[cfg(feature = "optimism")]
+pub use optimism::FoundryTransactionResponse;
 pub use receipt::*;
+
+/// Default JSON-RPC transaction response when the `optimism` feature is disabled.
+#[cfg(not(feature = "optimism"))]
+pub type FoundryTransactionResponse = alloy_rpc_types_eth::Transaction<crate::FoundryTxEnvelope>;
 
 /// Foundry network type.
 ///
@@ -32,15 +42,15 @@ impl Network for FoundryNetwork {
 
     type ReceiptEnvelope = crate::FoundryReceiptEnvelope;
 
-    type Header = alloy_consensus::Header;
+    type Header = FoundryHeader;
 
     type TransactionRequest = crate::FoundryTransactionRequest;
 
-    type TransactionResponse = op_alloy_rpc_types::Transaction<crate::FoundryTxEnvelope>;
+    type TransactionResponse = FoundryTransactionResponse;
 
     type ReceiptResponse = crate::FoundryTxReceipt;
 
-    type HeaderResponse = alloy_rpc_types_eth::Header;
+    type HeaderResponse = alloy_rpc_types_eth::Header<FoundryHeader>;
 
     type BlockResponse =
         alloy_rpc_types_eth::Block<Self::TransactionResponse, Self::HeaderResponse>;
