@@ -84,6 +84,24 @@ const EIP7825_TX_GAS_LIMIT_CAP: u64 = 0x1000000;
 const MONAD_TX_GAS_LIMIT_CAP: u64 = 30_000_000;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn monad_estimation_preserves_the_calldata_gas_floor() {
+    let (_api, handle) = spawn(NodeConfig::test_monad()).await;
+    let provider = handle.http_provider();
+    let accounts = provider.get_accounts().await.unwrap();
+    let request = WithOtherFields::new(
+        TransactionRequest::default()
+            .with_from(accounts[0])
+            .with_to(accounts[1])
+            .with_input(Bytes::from_static(b"hello"))
+            .with_gas_limit(100_000),
+    );
+
+    assert_eq!(provider.estimate_gas(request.clone()).await.unwrap(), 21_200);
+    let access_list = provider.create_access_list(&request).await.unwrap();
+    assert_eq!(access_list.gas_used, U256::from(21_200));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn monad_nine_exposes_reserve_balance_precompile_for_calls() {
     let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
     let (_api, handle) = spawn(config).await;

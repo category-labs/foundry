@@ -3,7 +3,7 @@ use crate::build::ScriptPredeployLibraries;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_evm::{
     FromRecoveredTx,
-    revm::context::{Block, Transaction},
+    revm::context::{Block, Cfg, Transaction},
 };
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, TxKind, U256, map::AddressHashMap};
@@ -488,6 +488,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
     ) -> Result<u64> {
         let mut gas_used = res.gas_used;
         if matches!(res.exit_reason, Some(return_ok!())) {
+            gas_used = gas_limit_lower_bound(res);
             // Store the current gas limit and reset it later.
             let init_gas_limit = self.executor.tx_env().gas_limit();
 
@@ -542,6 +543,17 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         tx.set_gas_limit(transaction.gas().expect("fixed gas limit missing") as u64);
         (env, tx)
     }
+}
+
+/// Includes the calldata validation minimum when execution consumption is lower.
+pub(crate) fn gas_limit_lower_bound<FEN: FoundryEvmNetwork>(res: &RawCallResult<FEN>) -> u64 {
+    let cfg = &res.evm_env.cfg_env;
+    let floor_gas = if cfg.is_eip7623_disabled() {
+        0
+    } else {
+        cfg.gas_params().initial_tx_gas_for_tx(&res.tx_env, None).floor_gas()
+    };
+    res.gas_used.max(floor_gas)
 }
 
 /// Gas-search arithmetic shared by ordinary and Monad simulation.
@@ -615,6 +627,37 @@ mod tests {
     };
     use foundry_evm_networks::NetworkConfigs;
     use tempo_alloy::primitives::{TempoTransaction, TempoTxEnvelope, transaction::Call};
+
+    #[cfg(feature = "monad")]
+    use foundry_evm::core::evm::MonadEvmNetwork;
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn monad_broadcast_estimate_preserves_the_calldata_gas_floor() {
+        let executor = ExecutorBuilder::<MonadEvmNetwork>::new().gas_limit(1_000_000).build(
+            EvmEnvFor::<MonadEvmNetwork>::default(),
+            TxEnvFor::<MonadEvmNetwork>::default(),
+            Backend::spawn(None).unwrap(),
+            NetworkConfigs::with_monad(),
+        );
+        let target = Address::repeat_byte(0x11);
+        let calldata = Bytes::from(vec![1; 4_000]);
+        let result = executor.call_raw(CALLER, target, calldata.clone(), U256::ZERO).unwrap();
+        assert!(!result.reverted);
+        assert_eq!(result.gas_used, 85_000);
+
+        let mut runner = ScriptRunner::new(executor, EvmOpts::default());
+        let gas_limit = runner
+            .search_optimal_gas_usage(&result, CALLER, target, &calldata, U256::ZERO)
+            .unwrap();
+        assert!(gas_limit >= 181_000);
+        assert!(gas_limit < 1_000_000);
+
+        runner.executor.set_gas_limit(gas_limit);
+        let result = runner.executor.call_raw(CALLER, target, calldata, U256::ZERO).unwrap();
+        assert!(!result.reverted);
+        assert_eq!(result.gas_used, 85_000);
+    }
 
     #[test]
     fn successful_probes_keep_existing_ten_percent_stop() {

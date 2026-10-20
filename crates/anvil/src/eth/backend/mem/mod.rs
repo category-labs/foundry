@@ -3790,7 +3790,7 @@ impl<N: Network> Backend<N> {
             monad_context.as_mut().map(next_monad_context),
         )?;
 
-        let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
+        let (exit_reason, gas_used, out, _logs) = self.unpack_call_result(result);
         inspector.print_logs();
 
         if self.print_traces {
@@ -3863,14 +3863,17 @@ impl<N: Network> Backend<N> {
         if let Some(gas_limit) = overrides.gas_limit {
             tx_env.base_mut().gas_limit = gas_limit;
         }
-        if let Some(access_list) = overrides.access_list {
+        let floor_gas = if let Some(access_list) = overrides.access_list {
             let tx_env = tx_env.base_mut();
             Self::use_block_fees(&mut evm_env, tx_env, block_fees);
             tx_env.access_list = access_list;
             if tx_env.tx_type == TransactionType::Legacy as u8 {
                 tx_env.tx_type = TransactionType::Eip2930 as u8;
             }
-        }
+            self.access_list_gas_floor(&evm_env, tx_env)
+        } else {
+            0
+        };
         let ResultAndState { result, state } = self.transact_call_with_inspector_ref(
             state,
             &evm_env,
@@ -3878,9 +3881,9 @@ impl<N: Network> Backend<N> {
             tx_env,
             monad_context.as_mut().map(next_monad_context),
         )?;
-        let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
+        let (exit_reason, gas_used, out, _logs) = self.unpack_call_result(result);
         inspector.print_logs();
-        Ok((exit_reason, out, gas_used as u128, state))
+        Ok((exit_reason, out, gas_used.max(floor_gas) as u128, state))
     }
 
     pub(crate) fn build_access_list_with_state_and_context(
@@ -3898,6 +3901,7 @@ impl<N: Network> Backend<N> {
         let PreparedCall { mut evm_env, mut tx_env, .. } =
             self.prepare_call_env(state, request, fee_details, block_env)?;
         Self::use_block_fees(&mut evm_env, tx_env.base_mut(), block_fees);
+        let floor_gas = self.access_list_gas_floor(&evm_env, tx_env.base());
         let ResultAndState { result, state: _ } = self.transact_call_with_inspector_ref(
             state,
             &evm_env,
@@ -3905,7 +3909,7 @@ impl<N: Network> Backend<N> {
             tx_env,
             monad_context.as_mut().map(next_monad_context),
         )?;
-        let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
+        let (exit_reason, gas_used, out, _logs) = self.unpack_call_result(result);
         let access_list = inspector.access_list();
         #[cfg(feature = "monad")]
         let access_list = if self.is_monad() {
@@ -3913,7 +3917,26 @@ impl<N: Network> Backend<N> {
         } else {
             access_list
         };
-        Ok((exit_reason, out, gas_used, access_list))
+        Ok((exit_reason, out, gas_used.max(floor_gas), access_list))
+    }
+
+    /// Unpacks simulation consumption without changing receipt gas accounting.
+    fn unpack_call_result<H: IntoInstructionResult>(
+        &self,
+        result: ExecutionResult<H>,
+    ) -> (InstructionResult, u64, Option<Output>, Vec<revm::primitives::Log>) {
+        let gas_used =
+            if self.is_monad() { result.gas().total_gas_spent() } else { result.tx_gas_used() };
+        let (reason, _, output, logs) = unpack_execution_result(result);
+        (reason, gas_used, output, logs)
+    }
+
+    /// Recomputes the calldata validation minimum without Monad's full-limit receipt charge.
+    fn access_list_gas_floor(&self, evm_env: &EvmEnv, tx_env: &TxEnv) -> u64 {
+        if !self.is_monad() || evm_env.cfg_env.is_eip7623_disabled() {
+            return 0;
+        }
+        evm_env.cfg_env.gas_params().initial_tx_gas_for_tx(tx_env, None).floor_gas()
     }
 
     /// Restores the block's base and blob base fees that a zero-fee call env clears. Like geth,
@@ -10791,38 +10814,73 @@ fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        BlockRequest, FeeDetails, ForkCacheNamespace, ForkCacheSource, InstructionResult,
-        MiningCommitHook, Output, StagedForkCacheLease, StagedForkDbUser,
-        arbitrum_replay_block_number,
-    };
-    use crate::{NodeConfig, config::ForkTransactionReplay, spawn};
-    use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
-    use alloy_primitives::{Address, B256, Bytes, U256};
+    use super::*;
+    use crate::spawn;
+    use alloy_network::TransactionBuilder;
     use alloy_provider::Provider;
-    use alloy_rpc_types::{Block, BlockTransactions, TransactionRequest, state::EvmOverrides};
-    use alloy_serde::WithOtherFields;
-    use foundry_config::NamedChain;
-    use foundry_evm::{
-        backend::{BlockchainDb, BlockchainDbMeta},
-        hardfork::{EthereumHardfork, FoundryHardfork},
-    };
-    use foundry_evm_networks::arbitrum;
-    use std::sync::Arc;
+    use alloy_rpc_types::Block;
+    use foundry_evm::backend::BlockchainDbMeta;
     use tempfile::tempdir;
-    use tokio::sync::Notify;
 
     #[cfg(feature = "base")]
     use base_common_precompiles::{ActivationRegistryStorage, B20FactoryStorage};
     #[cfg(feature = "base")]
-    use foundry_evm::{hardforks::BaseUpgrade, traces::CallTraceDecoderBuilder};
+    use foundry_evm::traces::CallTraceDecoderBuilder;
 
-    #[cfg(all(feature = "base", feature = "optimism"))]
-    use alloy_consensus::Header;
-    #[cfg(all(feature = "base", feature = "optimism"))]
-    use foundry_evm::hardfork::OpHardfork;
-    #[cfg(all(feature = "base", feature = "optimism"))]
-    use foundry_evm_networks::NetworkConfigs;
+    #[cfg(feature = "monad")]
+    use revm::context_interface::result::{ResultGas, SuccessReason};
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "monad")]
+    async fn simulation_gas_excludes_monad_receipt_charge() {
+        for (config, consumed) in
+            [(NodeConfig::test(), 100_000), (NodeConfig::test_monad(), 21_080)]
+        {
+            let (api, _handle) = spawn(config).await;
+            let gas = ResultGas::default().with_total_gas_spent(21_080).with_floor_gas(100_000);
+            for result in [
+                ExecutionResult::Success {
+                    reason: SuccessReason::Stop,
+                    gas,
+                    output: Output::Call(Bytes::new()),
+                    logs: vec![],
+                },
+                ExecutionResult::Revert { gas, output: Bytes::new(), logs: vec![] },
+                ExecutionResult::Halt { reason: HaltReason::InvalidFEOpcode, gas, logs: vec![] },
+            ] {
+                assert_eq!(result.tx_gas_used(), 100_000);
+                assert_eq!(api.backend.unpack_call_result(result).1, consumed);
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "monad")]
+    async fn monad_access_list_builder_preserves_the_calldata_gas_floor() {
+        let (api, handle) = spawn(NodeConfig::test_monad()).await;
+        let accounts = handle.http_provider().get_accounts().await.unwrap();
+        let request = WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(accounts[0])
+                .with_to(accounts[1])
+                .with_input(Bytes::from_static(b"hello"))
+                .with_gas_limit(100_000),
+        );
+        let (_, _, gas_used, _) = api
+            .backend
+            .with_database_at_and_context(None, |state, block_env, monad_context| {
+                api.backend.build_access_list_with_state_and_context(
+                    &state,
+                    request,
+                    FeeDetails::zero(),
+                    block_env,
+                    monad_context,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(gas_used, 21_200);
+    }
 
     fn test_cache_db(cache_path: std::path::PathBuf) -> BlockchainDb {
         let db = BlockchainDb::new(BlockchainDbMeta::default(), Some(cache_path));

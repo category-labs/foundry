@@ -1713,15 +1713,16 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
     fork_block_number: Option<u64>,
 ) -> eyre::Result<RawCallResult<FEN>> {
     let execution_cancelled = inspector.execution_cancelled();
+    let gas_used = FEN::EvmFactory::execution_gas_used(result.gas());
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
         ExecutionResult::Success { reason, gas, output, logs } => {
-            (reason.into(), gas.final_refunded(), gas.tx_gas_used(), Some(output), logs)
+            (reason.into(), gas.final_refunded(), gas_used, Some(output), logs)
         }
-        ExecutionResult::Revert { gas, output, logs } => {
-            (InstructionResult::Revert, 0_u64, gas.tx_gas_used(), Some(Output::Call(output)), logs)
+        ExecutionResult::Revert { output, logs, .. } => {
+            (InstructionResult::Revert, 0_u64, gas_used, Some(Output::Call(output)), logs)
         }
-        ExecutionResult::Halt { reason, gas, logs } => {
-            (reason.into_instruction_result(), 0_u64, gas.tx_gas_used(), None, logs)
+        ExecutionResult::Halt { reason, logs, .. } => {
+            (reason.into_instruction_result(), 0_u64, gas_used, None, logs)
         }
     };
     let stipend = calculate_stipend(&tx_env, evm_env.cfg_env());
