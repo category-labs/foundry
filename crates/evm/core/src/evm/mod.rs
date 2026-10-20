@@ -19,7 +19,7 @@ use revm::{
     Database,
     context::{
         ContextTr, JournalTr, LocalContextTr,
-        result::{EVMError, HaltReason, ResultAndState},
+        result::{EVMError, HaltReason, ResultAndState, ResultGas},
     },
     handler::{EvmTr, FrameResult},
     inspector::{InspectorEvmTr, InspectorHandler, NoOpInspector},
@@ -148,6 +148,19 @@ pub trait FoundryEvmFactory:
     /// This does not reconstruct the instruction table or precompile registry.
     fn set_execution_spec(context: &mut Self::FoundryContext<'_>, spec: Self::Spec) {
         context.set_spec_and_gas_params(spec);
+    }
+
+    /// Gas used for execution reports and estimation, including intrinsic gas.
+    ///
+    /// Ethereum retains its refund and calldata-floor rules. Families that charge the full
+    /// transaction limit can override this to report the separately metered execution work.
+    fn execution_gas_used(gas: &ResultGas) -> u64 {
+        gas.tx_gas_used()
+    }
+
+    /// Regular gas charged to an isolated frame before applying its refund, excluding state gas.
+    fn execution_regular_gas_used(gas: &ResultGas) -> u64 {
+        gas.block_regular_gas_used()
     }
 }
 
@@ -427,6 +440,29 @@ mod tests {
     use monad_revm::{MonadHardfork, MonadJournalTr, reserve_balance::tracker::ReserveBalanceInit};
     #[cfg(feature = "monad")]
     use revm::context::{BlockEnv, CfgEnv};
+
+    #[test]
+    fn ethereum_execution_gas_retains_floor_refund_and_state_rules() {
+        let gas = ResultGas::default()
+            .with_total_gas_spent(50_000)
+            .with_state_gas_spent(15_000)
+            .with_refunded(10_000)
+            .with_floor_gas(45_000);
+        assert_eq!(EthEvmFactory::execution_gas_used(&gas), 45_000);
+        assert_eq!(EthEvmFactory::execution_regular_gas_used(&gas), 45_000);
+        let gas = gas.with_floor_gas(0);
+        assert_eq!(EthEvmFactory::execution_gas_used(&gas), 40_000);
+        assert_eq!(EthEvmFactory::execution_regular_gas_used(&gas), 35_000);
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn monad_execution_gas_excludes_the_transaction_charge() {
+        let gas = ResultGas::default().with_total_gas_spent(21_080).with_floor_gas(100_000);
+        assert_eq!(MonadEvmFactory::execution_gas_used(&gas), 21_080);
+        assert_eq!(MonadEvmFactory::execution_regular_gas_used(&gas), 21_080);
+        assert_eq!(gas.tx_gas_used(), 100_000);
+    }
 
     #[test]
     fn inherited_journal_publishes_only_after_success() {

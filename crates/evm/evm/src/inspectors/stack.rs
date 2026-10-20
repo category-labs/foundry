@@ -1239,15 +1239,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let precharged_state = precharged_state.map_or(0, |gas| gas.min(tx_state_gas_used));
         let state_gas_used = tx_state_gas_used - precharged_state;
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-            cheats
-                .gas_metering
-                .set_isolated_snapshot_gas_used(transaction_gas.tx_gas_used(), precharged_state);
+            cheats.gas_metering.set_isolated_snapshot_gas_used(
+                FEN::EvmFactory::execution_gas_used(&transaction_gas),
+                precharged_state,
+            );
         }
-        // The transaction also pays its intrinsic gas and calldata floor, which can exceed the
-        // gas forwarded to the frame. The frame then consumes its whole regular budget, as on an
+        // Transaction metering includes intrinsic gas and may apply a calldata floor. If this
+        // exceeds the gas forwarded to the frame, consume its whole regular budget, as on an
         // exceptional halt.
         if !(gas.record_state_cost(state_gas_used)
-            && gas.record_regular_cost(transaction_gas.block_regular_gas_used()))
+            && gas
+                .record_regular_cost(FEN::EvmFactory::execution_regular_gas_used(&transaction_gas)))
         {
             gas.spend_all();
         }
@@ -2485,6 +2487,56 @@ fn apply_mocked_function<FEN: FoundryEvmNetwork>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "monad")]
+    use crate::executors::ExecutorBuilder;
+    #[cfg(feature = "monad")]
+    use foundry_evm_core::{backend::Backend, constants::CALLER, evm::MonadEvmNetwork};
+    #[cfg(feature = "monad")]
+    use revm::state::Bytecode;
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn isolated_monad_calls_charge_execution_consumption() {
+        let target = Address::repeat_byte(0x11);
+        let callee = Address::repeat_byte(0x22);
+        for (callee_code, succeeds) in
+            [(Bytes::new(), true), (Bytes::from_static(&[0x5f, 0x5f, 0xfd]), false)]
+        {
+            let gas_used = [0, 5].map(|input_len| {
+                let mut evm_env = EvmEnvFor::<MonadEvmNetwork>::default();
+                evm_env.cfg_env.disable_eip3607 = true;
+                let mut executor = ExecutorBuilder::<MonadEvmNetwork>::new()
+                    .inspectors(|stack| stack.enable_isolation(true))
+                    .gas_limit(1_000_000)
+                    .build(
+                        evm_env,
+                        TxEnvFor::<MonadEvmNetwork>::default(),
+                        Backend::spawn(None).unwrap(),
+                        NetworkConfigs::with_monad(),
+                    );
+                executor.set_code(callee, Bytecode::new_raw(callee_code.clone())).unwrap();
+                // Store "hello", call the child with zero or five input bytes, and return its
+                // status.
+                let mut code = vec![
+                    0x64, b'h', b'e', b'l', b'l', b'o', 0x5f, 0x52, 0x5f, 0x5f, 0x60, input_len,
+                    0x60, 27, 0x5f, 0x73,
+                ];
+                code.extend_from_slice(callee.as_slice());
+                code.extend_from_slice(&[
+                    0x62, 0x01, 0x86, 0xa0, 0xf1, 0x5f, 0x52, 0x60, 32, 0x5f, 0xf3,
+                ]);
+                executor.set_code(target, Bytecode::new_raw(code.into())).unwrap();
+                let result =
+                    executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+                assert!(!result.reverted);
+                assert_eq!(U256::from_be_slice(&result.result), U256::from(succeeds));
+                result.gas_used
+            });
+            // Five nonzero calldata bytes consume 80 gas; the 200-gas calldata floor is a charge.
+            assert_eq!(gas_used[1] - gas_used[0], 80);
+        }
+    }
 
     #[test]
     fn opcode_dispatch_defaults_to_no_static_inspectors() {

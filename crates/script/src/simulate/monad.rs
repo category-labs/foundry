@@ -3,7 +3,7 @@
 use super::{PreSimulationState, RpcSimulationContext};
 use crate::{
     ScriptResult,
-    runner::{GasSearch, ScriptRunner, needs_more_gas},
+    runner::{GasSearch, ScriptRunner, gas_limit_lower_bound, needs_more_gas},
     simulate::FilledTransactionsState,
     transaction::ScriptTransactionBuilder,
 };
@@ -123,6 +123,7 @@ impl MonadSimulation {
         let result = self.runner.executor.call_with_env_and_context(env, tx, context)?;
         let mut gas_used = result.gas_used;
         if matches!(result.exit_reason, Some(return_ok!())) {
+            gas_used = gas_limit_lower_bound(&result);
             let initial_limit = self.runner.executor.tx_env().gas_limit();
             let mut search = GasSearch::new(gas_used);
             while let Some(limit) = search.next_limit() {
@@ -464,5 +465,27 @@ mod tests {
             assert_transaction_count(&simulation, index + 1);
             assert_eq!(simulation.runner.executor.get_nonce(sender).unwrap(), index as u64 + 1);
         }
+    }
+
+    #[test]
+    fn monad_simulation_estimate_preserves_the_calldata_gas_floor() {
+        let mut simulation = simulation();
+        let sender = Address::with_last_byte(0x42);
+        let recipient = Address::with_last_byte(0x43);
+        simulation.runner.executor.set_balance(sender, U256::MAX).unwrap();
+        let calldata = Bytes::from(vec![1; 4_000]);
+        let result = simulation
+            .simulate(&transaction(sender, Some(recipient), Some(calldata.clone())), false)
+            .unwrap();
+        assert!(result.success);
+        assert!(result.gas_used >= 181_000);
+        assert!(result.gas_used < 1 << 20);
+        assert_transaction_count(&simulation, 1);
+
+        simulation.runner.executor.set_gas_limit(result.gas_used);
+        let result =
+            simulation.runner.executor.call_raw(sender, recipient, calldata, U256::ZERO).unwrap();
+        assert!(!result.reverted);
+        assert_eq!(result.gas_used, 85_000);
     }
 }

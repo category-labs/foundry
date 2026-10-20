@@ -377,7 +377,7 @@ impl GasMetering {
         self.paused_frames.clear();
     }
 
-    /// Preserves the receipt gas of an isolated transaction for gas snapshots.
+    /// Preserves the reported execution gas of an isolated transaction for gas snapshots.
     ///
     /// `precharged_state` is the account-creation state gas in `gas_used` that the outer opcode
     /// already charged before entering the isolated frame.
@@ -385,7 +385,7 @@ impl GasMetering {
         self.isolated_snapshot_gas_used = Some((gas_used, precharged_state));
     }
 
-    /// Takes the receipt gas of the isolated transaction that wrapped the ending frame.
+    /// Takes the reported execution gas of the isolated transaction that wrapped the ending frame.
     ///
     /// Region snapshots replace the gas charged to the frame with the transaction gas, without
     /// changing the interpreter's gas. The transaction gas can be lower because of refunds, or

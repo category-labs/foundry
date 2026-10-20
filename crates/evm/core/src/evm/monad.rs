@@ -28,7 +28,7 @@ use revm::{
     context::{
         BlockEnv, ContextTr, Transaction, TransactionType, TxEnv,
         journaled_state::account::JournaledAccountTr,
-        result::{EVMError, ResultAndState},
+        result::{EVMError, ResultAndState, ResultGas},
     },
     context_interface::{Cfg, ContextSetters, transaction::AuthorizationTr},
     handler::{EthFrame, EvmTr, FrameResult},
@@ -132,6 +132,14 @@ impl FoundryEvmFactory for MonadEvmFactory {
 
         evm.0.ctx.cfg.tx_chain_id_check = true;
         Box::new(evm)
+    }
+
+    fn execution_gas_used(gas: &ResultGas) -> u64 {
+        gas.total_gas_spent()
+    }
+
+    fn execution_regular_gas_used(gas: &ResultGas) -> u64 {
+        gas.total_gas_spent().saturating_sub(gas.state_gas_spent_final())
     }
 }
 
