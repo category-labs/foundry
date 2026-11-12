@@ -2250,7 +2250,7 @@ mod tests {
         executor
     }
 
-    fn instrumented_hits(result: &RawCallResult) -> Vec<(u32, u8)> {
+    fn instrumented_hits<FEN: FoundryEvmNetwork>(result: &RawCallResult<FEN>) -> Vec<(u32, u8)> {
         match &result.edge_coverage {
             Some(EdgeCoverage::Instrumented(hits)) => {
                 hits.iter().map(|hit| (hit.id, hit.count)).collect()
@@ -2278,6 +2278,33 @@ mod tests {
         assert!(instrumented_hits(&bare).is_empty());
         let again = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
         assert_eq!(instrumented_hits(&again), [(5, 2), (7, 1)]);
+    }
+
+    /// Monad runs the probes on its own opcode table, where they stay gas-neutral.
+    #[cfg(feature = "monad")]
+    #[test]
+    fn edgecov_opcode_collects_instrumented_edges_on_monad() {
+        let mut executor = test_executor(
+            ExecutorBuilder::<MonadEvmNetwork>::new().gas_limit(1 << 20),
+            NetworkConfigs::with_monad(),
+        );
+        let corpus = foundry_config::FuzzCorpusConfig {
+            corpus_dir: Some("corpus".into()),
+            instrumented_edges: true,
+            ..Default::default()
+        };
+        executor.inspector_mut().collect_edge_coverage_with_config(&corpus);
+        let target = Address::repeat_byte(0x11);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(EDGECOV_CODE))).unwrap();
+        let stop = Address::repeat_byte(0x12);
+        executor.set_code(stop, Bytecode::new_raw(Bytes::from_static(&[0x00]))).unwrap();
+
+        let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.exit_reason, Some(InstrStop::Stop));
+        assert_eq!(instrumented_hits(&result), [(5, 2), (7, 1)]);
+
+        let bare = executor.call_raw(CALLER, stop, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(result.gas_used, bare.gas_used);
     }
 
     #[test]

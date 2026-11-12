@@ -5,6 +5,7 @@ use super::{
     FoundryTxConversion, FoundryTxResultExt, SendableExt, TxPayload, eth_envelope_from_any_rpc,
     eth_tx, eth_tx_from_request, with_eip7702_delegations,
 };
+use crate::edgecov;
 use alloy_consensus::{TxLegacy, transaction::Recovered};
 use alloy_network::{AnyRpcTransaction, Ethereum};
 use alloy_primitives::{
@@ -13,14 +14,15 @@ use alloy_primitives::{
 };
 use alloy_rpc_types::TransactionRequest;
 use evm2::{
-    Evm, ExecutionConfig, TxResult, Version,
+    Evm, EvmConfig, ExecutionConfig, OpcodeConfig, SpecId, TxResult, Version,
     ethereum::TxEnvelope,
     evm::{AccountInfo, precompile::PrecompileProvider},
     registry::TxRegistry,
 };
 use monad_evm2::{
     MonadChainContext, MonadEvmExt, MonadEvmFactory, MonadEvmTypes, MonadHardfork,
-    MonadPrecompiles, MonadTxResultExt, monad_memory_limit, monad_tx_registry, monad_version,
+    MonadPrecompiles, MonadTxResultExt, monad_memory_limit, monad_opcode_config, monad_tx_registry,
+    monad_version,
     page::set_storage_page_warm,
     protocol_system_call,
     reserve_balance::{reserve_account, sync_reserve_balance},
@@ -197,7 +199,34 @@ impl FoundryEvmFactory for MonadEvmFactory {
     ) -> ExecutionConfig<MonadEvmTypes> {
         // MIP-3 caps the pooled memory limit from MonadNine on, including a larger configured one.
         version.memory_limit = monad_memory_limit(spec, version.memory_limit);
-        ExecutionConfig::for_spec_and_version(spec, version)
+        // Each hardfork keeps the base spec that `monad-evm2` selects for it.
+        let config = match spec {
+            MonadHardfork::MonadEight => ExecutionConfig::for_config::<
+                InstrumentedMonadConfig<
+                    { SpecId::PRAGUE as u32 },
+                    { MonadHardfork::MonadEight as u32 },
+                >,
+            >(),
+            MonadHardfork::MonadNine => ExecutionConfig::for_config::<
+                InstrumentedMonadConfig<
+                    { SpecId::OSAKA as u32 },
+                    { MonadHardfork::MonadNine as u32 },
+                >,
+            >(),
+            MonadHardfork::MonadTen => ExecutionConfig::for_config::<
+                InstrumentedMonadConfig<
+                    { SpecId::OSAKA as u32 },
+                    { MonadHardfork::MonadTen as u32 },
+                >,
+            >(),
+            MonadHardfork::MonadNext => ExecutionConfig::for_config::<
+                InstrumentedMonadConfig<
+                    { SpecId::OSAKA as u32 },
+                    { MonadHardfork::MonadNext as u32 },
+                >,
+            >(),
+        };
+        config.with_version(version)
     }
 
     fn tx_registry(
@@ -259,4 +288,17 @@ impl FoundryExecutionHooks for MonadEvmTypes {
         evm.state_mut().set_storage_warm(address, slot, warm);
         set_storage_page_warm(evm, *address, slot, warm);
     }
+}
+
+/// Monad's opcode table of `BASE_SPEC_ID` and `MONAD_SPEC_ID` with the [`edgecov`] instrumentation
+/// opcodes.
+struct InstrumentedMonadConfig<const BASE_SPEC_ID: u32, const MONAD_SPEC_ID: u32>;
+
+impl<const BASE_SPEC_ID: u32, const MONAD_SPEC_ID: u32> EvmConfig<MonadEvmTypes>
+    for InstrumentedMonadConfig<BASE_SPEC_ID, MONAD_SPEC_ID>
+{
+    const BASE_SPEC_ID: SpecId =
+        SpecId::try_from_u32(BASE_SPEC_ID).expect("invalid Monad base spec id");
+    const OPCODE_CONFIG: &'static OpcodeConfig<MonadEvmTypes> =
+        &edgecov::with_instrumentation(monad_opcode_config::<BASE_SPEC_ID, MONAD_SPEC_ID>());
 }
