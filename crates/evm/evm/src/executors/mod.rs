@@ -2250,13 +2250,31 @@ mod tests {
         executor
     }
 
-    fn instrumented_hits(result: &RawCallResult) -> Vec<(u32, u8)> {
+    fn instrumented_hits<FEN: FoundryEvmNetwork>(result: &RawCallResult<FEN>) -> Vec<(u32, u8)> {
         match &result.edge_coverage {
             Some(EdgeCoverage::Instrumented(hits)) => {
                 hits.iter().map(|hit| (hit.id, hit.count)).collect()
             }
             other => panic!("expected instrumented edges, got {other:?}"),
         }
+    }
+
+    /// An executor on Monad's `spec` that collects instrumented edges like a campaign with
+    /// `instrumented_edges`.
+    #[cfg(feature = "monad")]
+    fn monad_edgecov_executor(spec: SpecFor<MonadEvmNetwork>) -> Executor<MonadEvmNetwork> {
+        let mut executor = test_executor(
+            ExecutorBuilder::<MonadEvmNetwork>::new().gas_limit(1 << 20),
+            NetworkConfigs::with_monad(),
+        );
+        executor.set_spec_id(spec);
+        let corpus = foundry_config::FuzzCorpusConfig {
+            corpus_dir: Some("corpus".into()),
+            instrumented_edges: true,
+            ..Default::default()
+        };
+        executor.inspector_mut().collect_edge_coverage_with_config(&corpus);
+        executor
     }
 
     #[test]
@@ -2278,6 +2296,26 @@ mod tests {
         assert!(instrumented_hits(&bare).is_empty());
         let again = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
         assert_eq!(instrumented_hits(&again), [(5, 2), (7, 1)]);
+    }
+
+    /// Monad runs the probes on the opcode table of every hardfork, where they stay gas-neutral.
+    #[cfg(feature = "monad")]
+    #[test]
+    fn edgecov_opcode_collects_instrumented_edges_on_monad() {
+        let target = Address::repeat_byte(0x11);
+        let stop = Address::repeat_byte(0x12);
+        for spec in SpecFor::<MonadEvmNetwork>::ALL {
+            let mut executor = monad_edgecov_executor(spec);
+            executor.set_code(target, Bytecode::new_raw(Bytes::from_static(EDGECOV_CODE))).unwrap();
+            executor.set_code(stop, Bytecode::new_raw(Bytes::from_static(&[0x00]))).unwrap();
+
+            let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+            assert_eq!(result.exit_reason, Some(InstrStop::Stop), "{spec:?}");
+            assert_eq!(instrumented_hits(&result), [(5, 2), (7, 1)], "{spec:?}");
+
+            let bare = executor.call_raw(CALLER, stop, Bytes::new(), U256::ZERO).unwrap();
+            assert_eq!(result.gas_used, bare.gas_used, "{spec:?}");
+        }
     }
 
     #[test]
@@ -2377,6 +2415,46 @@ mod tests {
         // Without cmp-log, the probes still run and record nothing.
         instrumented.inspector_mut().collect_evm_cmp_log(false);
         assert!(cmp_values(&instrumented, target).is_empty());
+    }
+
+    /// Monad records the operands of `CMPLOG` probes on every hardfork, where the probes stay
+    /// gas-neutral.
+    #[cfg(feature = "monad")]
+    #[test]
+    fn instrumented_cmp_log_collects_operands_on_monad() {
+        let target = Address::repeat_byte(0x31);
+        let unprobed = Address::repeat_byte(0x32);
+        // Sites 1 to 5 compare 1 with 2 once each. The loop site compares 10 with its counter, up
+        // to its observation limit.
+        let cmp = |site, opcode, op1: u64, op2: u64| CmpOperands {
+            op1: U256::from(op1),
+            op2: U256::from(op2),
+            pc: site,
+            address: target,
+            opcode,
+        };
+        let expected = [(1, 0x14), (2, 0x10), (3, 0x11), (4, 0x12), (5, 0x13)]
+            .into_iter()
+            .map(|(site, opcode)| cmp(site, opcode, 1, 2))
+            .chain((0..u64::from(MAX_CMP_OBSERVATIONS_PER_SITE)).map(|i| cmp(6, 0x14, 10, i)))
+            .collect::<Vec<_>>();
+        for spec in SpecFor::<MonadEvmNetwork>::ALL {
+            let mut executor = monad_edgecov_executor(spec);
+            executor.inspector_mut().collect_evm_cmp_log(true);
+            executor
+                .set_code(target, Bytecode::new_raw(Bytes::from_static(CMP_PROBED_CODE)))
+                .unwrap();
+            executor.set_code(unprobed, Bytecode::new_raw(Bytes::from_static(CMP_CODE))).unwrap();
+
+            let result = executor.call_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+            assert_eq!(result.exit_reason, Some(InstrStop::Stop), "{spec:?}");
+            assert_eq!(result.evm_cmp_values.as_deref(), Some(&expected[..]), "{spec:?}");
+
+            // Instrumentation is gas-neutral: the same as the code without its probes.
+            let bare = executor.call_raw(CALLER, unprobed, Bytes::new(), U256::ZERO).unwrap();
+            assert_eq!(bare.exit_reason, Some(InstrStop::Stop), "{spec:?}");
+            assert_eq!(result.gas_used, bare.gas_used, "{spec:?}");
+        }
     }
 
     #[test]

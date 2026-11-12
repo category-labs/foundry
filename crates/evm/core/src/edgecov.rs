@@ -319,11 +319,17 @@ mod tests {
 
     /// Asserts that `F`'s opcode table is its network's default table plus the probes.
     fn assert_adds_only_probes<F: FoundryEvmFactory>() {
-        let spec = SpecOf::<F>::default();
+        assert_adds_only_probes_at::<F>(SpecOf::<F>::default());
+    }
+
+    /// Asserts that `F`'s opcode table at `spec` is its network's default table plus the probes,
+    /// on the same base spec.
+    fn assert_adds_only_probes_at<F: FoundryEvmFactory>(spec: SpecOf<F>) {
         let version = F::default().version(spec, 1);
-        let ours = F::default().execution_config(spec, version).opcode_view();
-        let default =
-            ExecutionConfig::<F::Types>::for_spec_and_version(spec, version).opcode_view();
+        let ours = F::default().execution_config(spec, version);
+        let default = ExecutionConfig::<F::Types>::for_spec_and_version(spec, version);
+        assert_eq!(ours.base_spec_id(), default.base_spec_id(), "{spec:?}");
+        let (ours, default) = (ours.opcode_view(), default.opcode_view());
         for opcode in 0..=u8::MAX {
             let expected = match opcode {
                 EDGECOV | CMPLOG => OpcodeChange::Instruction,
@@ -342,5 +348,10 @@ mod tests {
         assert_adds_only_probes::<op_evm2::OpEvmFactory>();
         #[cfg(feature = "base")]
         assert_adds_only_probes::<base_evm2::BaseEvmFactory>();
+        // Monad selects its table per hardfork, several of which share a base spec.
+        #[cfg(feature = "monad")]
+        for spec in monad_evm2::MonadHardfork::ALL {
+            assert_adds_only_probes_at::<monad_evm2::MonadEvmFactory>(spec);
+        }
     }
 }
